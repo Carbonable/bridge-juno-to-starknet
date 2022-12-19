@@ -10,4 +10,6 @@ Feature: Bridge between Juno and Starknet for carbonABLE NFT's
     Scenario: Signed hash is incorrect
         Given a request with values:
             | signed_hash | starknet_account_addr | keplr_customer_pubkey | project_id | tokens_ids |
-            | aVerySignedHas | st4rkn3t-1 | k3plr-pk1 | projectId | [token1, token2] |
+            | anInvalidHash | st4rkn3t-1 | k3plr-pk1 | projectId | [token1, token2] |
+        When I execute the request
+        Then the signed hash should not be valid

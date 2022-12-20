@@ -8,8 +8,107 @@ Feature: Bridge between Juno and Starknet for carbonABLE NFT's
         - Mint tokens on starknet.
 
     Scenario: Signed hash is incorrect
+        Given the following transaction list
+            """ []
+            """
         Given a request with values:
             | signed_hash | starknet_account_addr | keplr_customer_pubkey | project_id | tokens_ids |
-            | anInvalidHash | st4rkn3t-1 | k3plr-pk1 | projectId | [token1, token2] |
+            | anInvalidHash | st4rkn3t-1 | k3plr-pk1 | projectId | [254, 255] |
         When I execute the request
         Then the signed hash should not be valid
+
+    Scenario: Check keplr customer wallet was the last owner of tokens
+        Given the following transaction list
+            """
+            [
+                {
+                    "sender": "sender-1",
+                    "contract": "projectId",
+                    "messages": {
+                        "msg": {
+                            "transfer_nft": {
+                                "recipient": "admin-account",
+                                "token_id": "255"
+                            }
+                        }
+                    }
+                },
+                {
+                    "sender": "carbonABLE",
+                    "contract": "projectId",
+                    "messages": {
+                        "msg": {
+                            "transfer_nft": {
+                                "recipient": "not-the-customer",
+                                "token_id": "255"
+                            }
+                        }
+                    }
+                },
+                {
+                    "sender": "carbonABLE",
+                    "contract": "projectId",
+                    "messages": {
+                        "msg": {
+                            "transfer_nft": {
+                                "recipient": "k3plr-pk1",
+                                "token_id": "254"
+                            }
+                        }
+                    }
+                },
+                {
+                    "sender": "carbonABLE",
+                    "contract": "projectId",
+                    "messages": {
+                        "msg": {
+                            "transfer_nft": {
+                                "recipient": "k3plr-pk1",
+                                "token_id": "255"
+                            }
+                        }
+                    }
+                }
+            ]
+            """
+        Given a request with values:
+            | signed_hash | starknet_account_addr | keplr_customer_pubkey | project_id | tokens_ids |
+            | aValidSignedHash | st4rkn3t-1 | k3plr-pk1 | projectId | [255] |
+        When I execute the request
+        Then I sould receive an error because provided keplr wallet was not the previous owner
+
+    Scenario: Check last transaction is owned by admin-wallet
+        Given the following transaction list
+            """
+            [
+                {
+                    "sender": "sender-1",
+                    "contract": "projectId",
+                    "messages": {
+                        "msg": {
+                            "transfer_nft": {
+                                "recipient": "not-admin-account",
+                                "token_id": "255"
+                            }
+                        }
+                    }
+                },
+                {
+                    "sender": "carbonABLE",
+                    "contract": "projectId",
+                    "messages": {
+                        "msg": {
+                            "transfer_nft": {
+                                "recipient": "not-the-customer",
+                                "token_id": "255"
+                            }
+                        }
+                    }
+                }
+            ]
+            """
+        Given a request with values:
+            | signed_hash | starknet_account_addr | keplr_customer_pubkey | project_id | tokens_ids |
+            | aValidSignedHash | st4rkn3t-1 | k3plr-pk1 | projectId | [255] |
+        When I execute the request
+        Then I sould receive an error because current owner is not admin wallet

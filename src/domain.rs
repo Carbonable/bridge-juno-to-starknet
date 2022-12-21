@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct BridgeRequest {
-    signed_hash: String,
-    starknet_account_addr: String,
-    keplr_wallet_pubkey: String,
-    project_id: String,
-    tokens_id: Vec<String>,
+    pub signed_hash: String,
+    pub starknet_account_addr: String,
+    pub keplr_wallet_pubkey: String,
+    pub project_id: String,
+    pub tokens_id: Vec<String>,
 }
 
 impl BridgeRequest {
@@ -64,6 +64,8 @@ pub enum BridgeError {
     FetchTokenError(String),
     TokenNotTransferedToAdmin(String),
     TokenDidNotBelongToWallet(String),
+    TokenAlreadyMinted(String),
+    ErrorWhileMintingToken,
 }
 
 pub enum SignedHashValidatorError {
@@ -106,11 +108,28 @@ impl Debug for dyn TransactionRepository {
     }
 }
 
+pub enum MintError {}
+pub trait StarknetManager {
+    fn project_has_token(&self, project_id: &str, token_id: &str) -> bool;
+    fn mint_project_token(
+        &self,
+        project_id: &str,
+        token_id: &str,
+        starknet_account_addr: &str,
+    ) -> Result<String, MintError>;
+}
+impl Debug for dyn StarknetManager {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "StarknetManager{{}}")
+    }
+}
+
 pub fn handle_bridge_request(
     req: &BridgeRequest,
     keplr_admin_wallet: &str,
     hash_validator: Arc<dyn SignedHashValidator>,
     transaction_repository: Arc<dyn TransactionRepository>,
+    starknet_manager: Arc<dyn StarknetManager>,
 ) -> BridgeResponse {
     let hash = match hash_validator.verify(
         &req.signed_hash,
@@ -121,6 +140,7 @@ pub fn handle_bridge_request(
         Err(_err) => return Err(BridgeError::InvalidSign),
     };
 
+    let mut minted_tokens = Vec::new();
     // Should return an array of transactions for given token
     for token in &req.tokens_id {
         let transactions =
@@ -143,8 +163,23 @@ pub fn handle_bridge_request(
             if prev_owner.recipient != req.keplr_wallet_pubkey {
                 return Err(BridgeError::TokenDidNotBelongToWallet(token.to_string()));
             }
+
+            // If token has already been minted, customer needs to know
+            if starknet_manager.project_has_token(&req.project_id, token) {
+                return Err(BridgeError::TokenAlreadyMinted(token.to_string()));
+            }
+            // Mint token on starknet
+            let mint = starknet_manager.mint_project_token(
+                &req.project_id,
+                token,
+                &req.starknet_account_addr,
+            );
+            match mint {
+                Ok(m) => minted_tokens.push(m),
+                Err(_) => return Err(BridgeError::ErrorWhileMintingToken),
+            }
         }
     }
 
-    Ok(vec!["the-new-token-1".into(), "the-new-token-2".into()])
+    Ok(minted_tokens)
 }

@@ -1,9 +1,9 @@
-use std::{cell::RefCell, ptr::read, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, ptr::read, sync::Arc};
 
 use bridge_juno_to_starknet_backend::domain::{
     handle_bridge_request, BridgeError, BridgeRequest, BridgeResponse, MsgTypes::TransferNft,
-    SignedHashValidator, SignedHashValidatorError, Transaction, TransactionFetchError,
-    TransactionRepository,
+    SignedHashValidator, SignedHashValidatorError, StarknetManager, Transaction,
+    TransactionFetchError, TransactionRepository,
 };
 use cucumber::{gherkin::Step, given, then, when, World};
 use std::future::ready;
@@ -14,6 +14,7 @@ struct BridgeWorld {
     response: Option<BridgeResponse>,
     validator: Option<Arc<dyn SignedHashValidator>>,
     transactions_repository: Option<Arc<dyn TransactionRepository>>,
+    starknet_manager: Option<Arc<dyn StarknetManager>>,
 }
 impl BridgeWorld {
     fn with_signed_hash_validator(&mut self, validator: Arc<dyn SignedHashValidator>) {
@@ -21,6 +22,9 @@ impl BridgeWorld {
     }
     fn with_transaction_repository(&mut self, repository: Arc<dyn TransactionRepository>) {
         self.transactions_repository = Some(repository);
+    }
+    fn with_starknet_manager(&mut self, manager: Arc<dyn StarknetManager>) {
+        self.starknet_manager = Some(manager);
     }
 }
 
@@ -31,6 +35,7 @@ impl Default for BridgeWorld {
             response: None,
             validator: None,
             transactions_repository: None,
+            starknet_manager: None,
         }
     }
 }
@@ -73,6 +78,7 @@ fn when_i_execute_the_request(case: &mut BridgeWorld) {
             "admin-account",
             case.validator.as_ref().unwrap().clone(),
             case.transactions_repository.as_ref().unwrap().clone(),
+            case.starknet_manager.as_ref().unwrap().clone(),
         ))
     }
 }
@@ -89,7 +95,7 @@ fn then_the_signed_hash_sould_not_be_valid(case: &mut BridgeWorld) {
 #[then("I sould receive an error because provided keplr wallet was not the previous owner")]
 fn then_keplr_provided_wallet_incorrect(case: &mut BridgeWorld) {
     if let Some(response) = &case.response {
-        let err = match response {
+        let _err = match response {
             Err(err) => err,
             Ok(_o) => panic!("Keplr wallet is incorrect please check implementation"),
         };
@@ -99,11 +105,29 @@ fn then_keplr_provided_wallet_incorrect(case: &mut BridgeWorld) {
 #[then("I sould receive an error because current owner is not admin wallet")]
 fn then_current_owner_is_not_admin(case: &mut BridgeWorld) {
     if let Some(response) = &case.response {
-        let err = match response {
+        let _err = match response {
             Err(err) => err,
             Ok(_o) => panic!("Keplr wallet is incorrect please check implementation"),
         };
     };
+}
+
+#[then("nfts token should be minted on starknet and response sould be ok")]
+fn then_nfts_should_be_minted_on_starknet(case: &mut BridgeWorld) {
+    let project_id = &case.request.as_ref().unwrap().project_id;
+    let tokens_id = &case.request.as_ref().unwrap().tokens_id;
+    let starknet_manager = case.starknet_manager.as_ref().unwrap().clone();
+    if let Some(response) = &case.response {
+        let _r = match response {
+            Err(err) => panic!("{:#?}", err),
+            Ok(r) => r,
+        };
+        for token in tokens_id {
+            if !starknet_manager.project_has_token(project_id, token) {
+                panic!("Token {} has not been minted on starknet", token)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -156,10 +180,49 @@ impl InMemoryTransactionRepository {
     }
 }
 
+struct InMemoryStarknetTransactionManager {
+    nfts: RefCell<HashMap<String, HashMap<String, String>>>,
+}
+
+impl StarknetManager for InMemoryStarknetTransactionManager {
+    fn project_has_token(&self, project_id: &str, token_id: &str) -> bool {
+        let nfts = self.nfts.borrow();
+        nfts.contains_key(project_id) && nfts[project_id].contains_key(token_id)
+    }
+
+    fn mint_project_token(
+        &self,
+        project_id: &str,
+        token_id: &str,
+        starknet_account_addr: &str,
+    ) -> Result<String, bridge_juno_to_starknet_backend::domain::MintError> {
+        let mut nfts = self.nfts.borrow_mut();
+        if !nfts.contains_key(project_id) {
+            nfts.insert(project_id.to_string(), HashMap::new());
+        }
+
+        nfts.get_mut(project_id)
+            .unwrap()
+            .insert(token_id.into(), starknet_account_addr.into());
+
+        Ok(token_id.into())
+    }
+}
+
+impl InMemoryStarknetTransactionManager {
+    fn new() -> Self {
+        Self {
+            nfts: RefCell::new(HashMap::new()),
+        }
+    }
+}
+
 fn main() {
     let validator = Arc::new(TestSignedHashValidator {});
+    let starknet_manager = Arc::new(InMemoryStarknetTransactionManager::new());
     let world = BridgeWorld::cucumber().before(move |_feature, _rule, _scenario, _world| {
         _world.with_signed_hash_validator(validator.clone());
+        _world.with_starknet_manager(starknet_manager.clone());
         Box::pin(ready(()))
     });
 

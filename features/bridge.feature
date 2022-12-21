@@ -112,3 +112,39 @@ Feature: Bridge between Juno and Starknet for carbonABLE NFT's
             | aValidSignedHash | st4rkn3t-1 | k3plr-pk1 | projectId | [255] |
         When I execute the request
         Then I sould receive an error because current owner is not admin wallet
+
+    Scenario: Transaction are ok, last one has admin has recipient and current one has customers wallet
+        Given the following transaction list
+            """
+            [
+                {
+                    "sender": "sender-1",
+                    "contract": "projectId",
+                    "messages": {
+                        "msg": {
+                            "transfer_nft": {
+                                "recipient": "admin-account",
+                                "token_id": "255"
+                            }
+                        }
+                    }
+                },
+                {
+                    "sender": "carbonABLE",
+                    "contract": "projectId",
+                    "messages": {
+                        "msg": {
+                            "transfer_nft": {
+                                "recipient": "k3plr-pk1",
+                                "token_id": "255"
+                            }
+                        }
+                    }
+                }
+            ]
+            """
+        Given a request with values:
+            | signed_hash | starknet_account_addr | keplr_customer_pubkey | project_id | tokens_ids |
+            | aValidSignedHash | st4rkn3t-1 | k3plr-pk1 | projectId | [255] |
+        When I execute the request
+        Then nfts token should be minted on starknet and response sould be ok

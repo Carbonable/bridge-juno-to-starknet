@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  postgresql:
+    image: postgres:14.4-alpine
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: starknet_bridge
+
+  starknet_devnet:
+    image: shardlabs/starknet-devnet
+    command: ["starknet-devnet", "--host", "0.0.0.0", "--port", "5050", "--seed", "1713176974"]
+
+  juno_devnet:
+    image: ghcr.io/cosmoscontracts/juno:v11.0.0
+    command: ./setup_and_run.sh juno16g2rahf5846rxzp3fwlswy08fz8ccuwk03k57y
+    ports:
+      - 1317
+      - 26656
+      - 26657
+    environment:
+      STAKE_TOKEN: ujunox
+      UNSAFE_CORS: true
+

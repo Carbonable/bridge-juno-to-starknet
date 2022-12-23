@@ -24,48 +24,40 @@ Feature: Bridge between Juno and Starknet for carbonABLE NFT's
                 {
                     "sender": "sender-1",
                     "contract": "projectId",
-                    "messages": {
-                        "msg": {
-                            "transfer_nft": {
-                                "recipient": "admin-account",
-                                "token_id": "255"
-                            }
+                    "msg": {
+                        "transfer_nft": {
+                            "recipient": "admin-account",
+                            "token_id": "255"
                         }
                     }
                 },
                 {
                     "sender": "carbonABLE",
                     "contract": "projectId",
-                    "messages": {
-                        "msg": {
-                            "transfer_nft": {
-                                "recipient": "not-the-customer",
-                                "token_id": "255"
-                            }
+                    "msg": {
+                        "transfer_nft": {
+                            "recipient": "not-the-customer",
+                            "token_id": "255"
                         }
                     }
                 },
                 {
                     "sender": "carbonABLE",
                     "contract": "projectId",
-                    "messages": {
-                        "msg": {
-                            "transfer_nft": {
-                                "recipient": "k3plr-pk1",
-                                "token_id": "254"
-                            }
+                    "msg": {
+                        "transfer_nft": {
+                            "recipient": "k3plr-pk1",
+                            "token_id": "254"
                         }
                     }
                 },
                 {
                     "sender": "carbonABLE",
                     "contract": "projectId",
-                    "messages": {
-                        "msg": {
-                            "transfer_nft": {
-                                "recipient": "k3plr-pk1",
-                                "token_id": "255"
-                            }
+                    "msg": {
+                        "transfer_nft": {
+                            "recipient": "k3plr-pk1",
+                            "token_id": "255"
                         }
                     }
                 }
@@ -84,24 +76,20 @@ Feature: Bridge between Juno and Starknet for carbonABLE NFT's
                 {
                     "sender": "sender-1",
                     "contract": "projectId",
-                    "messages": {
-                        "msg": {
-                            "transfer_nft": {
-                                "recipient": "not-admin-account",
-                                "token_id": "255"
-                            }
+                    "msg": {
+                        "transfer_nft": {
+                            "recipient": "not-admin-account",
+                            "token_id": "255"
                         }
                     }
                 },
                 {
                     "sender": "carbonABLE",
                     "contract": "projectId",
-                    "messages": {
-                        "msg": {
-                            "transfer_nft": {
-                                "recipient": "not-the-customer",
-                                "token_id": "255"
-                            }
+                    "msg": {
+                        "transfer_nft": {
+                            "recipient": "not-the-customer",
+                            "token_id": "255"
                         }
                     }
                 }
@@ -120,24 +108,20 @@ Feature: Bridge between Juno and Starknet for carbonABLE NFT's
                 {
                     "sender": "sender-1",
                     "contract": "projectId",
-                    "messages": {
-                        "msg": {
-                            "transfer_nft": {
-                                "recipient": "admin-account",
-                                "token_id": "255"
-                            }
+                    "msg": {
+                        "transfer_nft": {
+                            "recipient": "admin-account",
+                            "token_id": "255"
                         }
                     }
                 },
                 {
                     "sender": "carbonABLE",
                     "contract": "projectId",
-                    "messages": {
-                        "msg": {
-                            "transfer_nft": {
-                                "recipient": "k3plr-pk1",
-                                "token_id": "255"
-                            }
+                    "msg": {
+                        "transfer_nft": {
+                            "recipient": "k3plr-pk1",
+                            "token_id": "255"
                         }
                     }
                 }

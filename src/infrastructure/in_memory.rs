@@ -1,4 +1,5 @@
-use std::{cell::RefCell, collections::HashMap};
+use async_trait::async_trait;
+use std::{cell::RefCell, collections::HashMap, sync::Mutex};
 
 use crate::domain::{
     MsgTypes, SignedHashValidator, SignedHashValidatorError, StarknetManager, Transaction,
@@ -22,22 +23,31 @@ impl SignedHashValidator for TestSignedHashValidator {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct InMemoryTransactionRepository {
-    pub transactions: RefCell<Vec<Transaction>>,
+    pub transactions: Mutex<Vec<Transaction>>,
 }
 
+#[async_trait]
 impl TransactionRepository for InMemoryTransactionRepository {
-    fn get_transactions_for_contract(
+    async fn get_transactions_for_contract(
         &self,
         project_id: &str,
         token_id: &str,
     ) -> Result<Vec<Transaction>, TransactionFetchError> {
-        let trans = self.transactions.borrow().clone();
-        let filtered_transactions: Vec<Transaction> = trans
+        let lock = match self.transactions.lock() {
+            Ok(l) => l,
+            _ => {
+                return Err(TransactionFetchError::FetchError(
+                    "Failed to acquire lock on the requested resource".into(),
+                ))
+            }
+        };
+        let filtered_transactions: Vec<Transaction> = lock
+            .clone()
             .into_iter()
             .filter(|t| {
-                let transfert = match &t.messages.msg {
+                let transfert = match &t.msg {
                     MsgTypes::TransferNft(tt) => tt,
                 };
                 t.contract == project_id && token_id == transfert.token_id
@@ -50,7 +60,7 @@ impl TransactionRepository for InMemoryTransactionRepository {
 impl InMemoryTransactionRepository {
     pub fn new(transactions: Vec<Transaction>) -> Self {
         Self {
-            transactions: RefCell::new(transactions),
+            transactions: Mutex::new(transactions),
         }
     }
 }

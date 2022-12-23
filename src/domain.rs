@@ -1,8 +1,9 @@
+use async_trait::async_trait;
 use core::fmt::{Debug, Formatter};
 use serde_derive::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct BridgeRequest {
     pub signed_hash: String,
     pub starknet_account_addr: String,
@@ -46,14 +47,9 @@ pub enum MsgTypes {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Message {
-    pub msg: MsgTypes,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Transaction {
     pub contract: String,
-    pub messages: Message,
+    pub msg: MsgTypes,
     pub sender: String,
 }
 
@@ -71,8 +67,6 @@ pub enum BridgeError {
 pub enum SignedHashValidatorError {
     FailedToVerifyHash,
 }
-
-pub type BridgeResponse = Result<Vec<String>, BridgeError>;
 
 pub trait SignedHashValidator {
     fn verify(
@@ -92,10 +86,12 @@ impl Debug for dyn SignedHashValidator {
 #[derive(Debug)]
 pub enum TransactionFetchError {
     FetchError(String),
+    DeserializationFailed,
 }
 
+#[async_trait]
 pub trait TransactionRepository {
-    fn get_transactions_for_contract(
+    async fn get_transactions_for_contract(
         &self,
         project_id: &str,
         token_id: &str,
@@ -124,13 +120,13 @@ impl Debug for dyn StarknetManager {
     }
 }
 
-pub fn handle_bridge_request(
+pub async fn handle_bridge_request<'a, 'b, 'c>(
     req: &BridgeRequest,
     keplr_admin_wallet: &str,
-    hash_validator: Arc<dyn SignedHashValidator>,
-    transaction_repository: Arc<dyn TransactionRepository>,
-    starknet_manager: Arc<dyn StarknetManager>,
-) -> BridgeResponse {
+    hash_validator: Arc<dyn SignedHashValidator + 'a>,
+    transaction_repository: Arc<dyn TransactionRepository + 'b>,
+    starknet_manager: Arc<dyn StarknetManager + 'c>,
+) -> Result<Vec<String>, BridgeError> {
     let hash = match hash_validator.verify(
         &req.signed_hash,
         &req.starknet_account_addr,
@@ -140,24 +136,29 @@ pub fn handle_bridge_request(
         Err(_err) => return Err(BridgeError::InvalidSign),
     };
 
+    // Fetch token from wallet id from database
+
     let mut minted_tokens = Vec::new();
     // Should return an array of transactions for given token
     for token in &req.tokens_id {
-        let transactions =
-            transaction_repository.get_transactions_for_contract(&req.project_id, token.as_str());
+        let transactions = transaction_repository
+            .get_transactions_for_contract(&req.project_id, token.as_str())
+            .await;
         if transactions.is_err() {
             return Err(BridgeError::FetchTokenError(token.to_string().into()));
         }
         if let Ok(t) = transactions {
             // Last transaction at index 0 should have admin wallet as recipient
             // transaction at index 1 should have customer keplr wallet as recipient
-            let admin_transfert = match &t[0].messages.msg {
+            let admin_transfert = match &t[0].msg {
                 MsgTypes::TransferNft(t) => t,
             };
-            let prev_owner = match &t[1].messages.msg {
+            let prev_owner = match &t[1].msg {
                 MsgTypes::TransferNft(t) => t,
             };
-            if admin_transfert.recipient != keplr_admin_wallet {
+            if admin_transfert.recipient != keplr_admin_wallet
+                && t[0].sender != req.keplr_wallet_pubkey
+            {
                 return Err(BridgeError::TokenNotTransferedToAdmin(token.to_string()));
             }
             if prev_owner.recipient != req.keplr_wallet_pubkey {

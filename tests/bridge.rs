@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bridge_juno_to_starknet_backend::{
     domain::{
-        handle_bridge_request, BridgeRequest, BridgeResponse, SignedHashValidator, StarknetManager,
+        handle_bridge_request, BridgeError, BridgeRequest, SignedHashValidator, StarknetManager,
         Transaction, TransactionRepository,
     },
     infrastructure::in_memory::{
@@ -15,7 +15,7 @@ use std::future::ready;
 #[derive(Debug, World)]
 struct BridgeWorld {
     request: Option<BridgeRequest>,
-    response: Option<BridgeResponse>,
+    response: Option<Result<Vec<String>, BridgeError>>,
     validator: Option<Arc<dyn SignedHashValidator>>,
     transactions_repository: Option<Arc<dyn TransactionRepository>>,
     starknet_manager: Option<Arc<dyn StarknetManager>>,
@@ -75,15 +75,18 @@ fn given_the_following_transactions_list(case: &mut BridgeWorld, step: &Step) {
 }
 
 #[when("I execute the request")]
-fn when_i_execute_the_request(case: &mut BridgeWorld) {
+async fn when_i_execute_the_request(case: &mut BridgeWorld) {
     if let Some(request) = &case.request {
-        case.response = Some(handle_bridge_request(
-            request,
-            "admin-account",
-            case.validator.as_ref().unwrap().clone(),
-            case.transactions_repository.as_ref().unwrap().clone(),
-            case.starknet_manager.as_ref().unwrap().clone(),
-        ))
+        case.response = Some(
+            handle_bridge_request(
+                request,
+                "admin-account",
+                case.validator.as_ref().unwrap().clone(),
+                case.transactions_repository.as_ref().unwrap().clone(),
+                case.starknet_manager.as_ref().unwrap().clone(),
+            )
+            .await,
+        )
     }
 }
 

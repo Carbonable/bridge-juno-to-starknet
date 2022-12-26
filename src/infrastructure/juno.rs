@@ -4,9 +4,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::thread::sleep;
 use std::time::Duration;
 
-use crate::domain::{
-    MsgTypes, Transaction, TransactionFetchError, TransactionRepository, TransferNft,
-};
+use crate::domain::bridge::{MsgTypes, Transaction, TransactionFetchError, TransactionRepository};
 
 const MAX_RETRY: i32 = 5;
 
@@ -71,7 +69,8 @@ impl TransactionRepository for JunoLcd {
         &self,
         project_id: &str,
         token_id: &str,
-    ) -> Result<Vec<crate::domain::Transaction>, crate::domain::TransactionFetchError> {
+    ) -> Result<Vec<crate::domain::bridge::Transaction>, crate::domain::bridge::TransactionFetchError>
+    {
         // Hard limitting limit and offset as this is not relevant here to use it as a param.
         let endpoint = format!(
             "/cosmos/tx/v1beta1/txs?events=execute._contract_address=%27{}%27&pagination.limit=60&pagination.offset=0&pagination.count_total=true",

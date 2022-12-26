@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bridge_juno_to_starknet_backend::{
-    domain::{
+    domain::bridge::{
         handle_bridge_request, BridgeError, BridgeRequest, SignedHashValidator, StarknetManager,
         Transaction, TransactionRepository,
     },

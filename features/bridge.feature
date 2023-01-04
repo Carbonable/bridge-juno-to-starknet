@@ -106,7 +106,7 @@ Feature: Bridge between Juno and Starknet for carbonABLE NFT's
             """
             [
                 {
-                    "sender": "sender-1",
+                    "sender": "k3plr-pk1",
                     "contract": "projectId",
                     "msg": {
                         "transfer_nft": {

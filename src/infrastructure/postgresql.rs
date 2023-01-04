@@ -26,15 +26,23 @@ impl PostgresDataRepository {
 #[async_trait]
 impl DataRepository for PostgresDataRepository {
     async fn save_customer_keys(&self, keys: CustomerKeys) -> Result<(), SaveCustomerDataError> {
-        let res = self.connection.clone().execute(
+        let insert = self.connection.clone().execute(
             "INSERT INTO customer_keys (keplr_wallet_pubkey, project_id, token_ids) VALUES ($1, $2, $3)",
             &[&keys.keplr_wallet_pubkey, &keys.project_id, &keys.token_ids]
             ).await;
-        if res.is_err() {
-            return Err(SaveCustomerDataError::FailedToPersistToDatabase);
+        if insert.is_err() {
+            let update = self.connection.clone().execute(
+                "UPDATE customer_keys SET token_ids = $1 WHERE keplr_wallet_pubkey = $2 AND project_id = $3",
+                &[&keys.token_ids, &keys.keplr_wallet_pubkey, &keys.project_id]).await;
+
+            if update.is_err() {
+                return Err(SaveCustomerDataError::FailedToPersistToDatabase);
+            }
+
+            return Ok(());
         }
 
-        if 1 == res.unwrap() {
+        if 1 == insert.unwrap() {
             return Ok(());
         }
 
@@ -56,7 +64,13 @@ impl DataRepository for PostgresDataRepository {
             Ok(r) => r,
             Err(_e) => return Err(SaveCustomerDataError::NotFound),
         };
+        let row = &rows[0];
+        let customer_keys = CustomerKeys {
+            keplr_wallet_pubkey: row.get::<usize, String>(1).into(),
+            project_id: row.get::<usize, String>(2).into(),
+            token_ids: row.get::<usize, Vec<String>>(3).into(),
+        };
 
-        Err(SaveCustomerDataError::NotImpled)
+        Ok(customer_keys)
     }
 }

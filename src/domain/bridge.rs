@@ -1,21 +1,40 @@
 use async_trait::async_trait;
 use core::fmt::{Debug, Formatter};
 use serde_derive::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
+
+use super::save_customer_data::DataRepository;
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct PubKey {
+    #[serde(rename(serialize = "type", deserialize = "type"))]
+    pub key_type: String,
+    #[serde(rename(serialize = "value", deserialize = "value"))]
+    pub key_value: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct SignedHash {
+    pub pub_key: PubKey,
+    pub signature: String,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct BridgeRequest {
-    pub signed_hash: String,
+    pub signed_hash: SignedHash,
     pub starknet_account_addr: String,
+    pub starknet_project_addr: String,
+    // pub keplr_wallet_pubkey: [u8; 33],
     pub keplr_wallet_pubkey: String,
     pub project_id: String,
-    pub tokens_id: Vec<String>,
+    pub tokens_id: Option<Vec<String>>,
 }
 
 impl BridgeRequest {
     pub fn new(
-        signed_hash: &str,
+        signed_hash: SignedHash,
         starknet_account_addr: &str,
+        starknet_project_addr: &str,
         keplr_wallet_pubkey: &str,
         project_id: &str,
         tokens_id: Vec<&str>,
@@ -25,11 +44,12 @@ impl BridgeRequest {
             tokens.push(t.into());
         }
         Self {
-            signed_hash: signed_hash.into(),
+            signed_hash,
             starknet_account_addr: starknet_account_addr.into(),
+            starknet_project_addr: starknet_project_addr.into(),
             keplr_wallet_pubkey: keplr_wallet_pubkey.into(),
             project_id: project_id.into(),
-            tokens_id: tokens,
+            tokens_id: Some(tokens),
         }
     }
 }
@@ -71,7 +91,7 @@ pub enum SignedHashValidatorError {
 pub trait SignedHashValidator {
     fn verify(
         &self,
-        signed_hash: &str,
+        signed_hash: &SignedHash,
         starknet_account_addrr: &str,
         keplr_wallet_pubkey: &str,
     ) -> Result<String, SignedHashValidatorError>;
@@ -104,10 +124,14 @@ impl Debug for dyn TransactionRepository {
     }
 }
 
-pub enum MintError {}
+pub enum MintError {
+    Failure,
+}
+
+#[async_trait]
 pub trait StarknetManager {
-    fn project_has_token(&self, project_id: &str, token_id: &str) -> bool;
-    fn mint_project_token(
+    async fn project_has_token(&self, project_id: &str, token_id: &str) -> bool;
+    async fn mint_project_token(
         &self,
         project_id: &str,
         token_id: &str,
@@ -120,13 +144,14 @@ impl Debug for dyn StarknetManager {
     }
 }
 
-pub async fn handle_bridge_request<'a, 'b, 'c>(
+pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
     req: &BridgeRequest,
     keplr_admin_wallet: &str,
     hash_validator: Arc<dyn SignedHashValidator + 'a>,
     transaction_repository: Arc<dyn TransactionRepository + 'b>,
     starknet_manager: Arc<dyn StarknetManager + 'c>,
-) -> Result<Vec<String>, BridgeError> {
+    data_repository: Arc<dyn DataRepository + 'd>,
+) -> Result<HashMap<String, String>, BridgeError> {
     let hash = match hash_validator.verify(
         &req.signed_hash,
         &req.starknet_account_addr,
@@ -137,10 +162,27 @@ pub async fn handle_bridge_request<'a, 'b, 'c>(
     };
 
     // Fetch token from wallet id from database
+    let tokens = match data_repository
+        .get_customer_keys(&req.keplr_wallet_pubkey, &req.project_id)
+        .await
+    {
+        Ok(t) => Some(t.token_ids),
+        Err(_) => None,
+    };
 
-    let mut minted_tokens = Vec::new();
+    if tokens.is_none() && req.tokens_id.is_none() {
+        return Err(BridgeError::FetchTokenError(
+            "Failed to fetch tokens from database".into(),
+        ));
+    }
+
+    let token_ids = match req.tokens_id.is_none() {
+        true => tokens.unwrap(),
+        false => req.tokens_id.as_ref().unwrap().to_vec(),
+    };
+    let mut minted_tokens = HashMap::new();
     // Should return an array of transactions for given token
-    for token in &req.tokens_id {
+    for token in &token_ids {
         let transactions = transaction_repository
             .get_transactions_for_contract(&req.project_id, token.as_str())
             .await;
@@ -148,37 +190,45 @@ pub async fn handle_bridge_request<'a, 'b, 'c>(
             return Err(BridgeError::FetchTokenError(token.to_string().into()));
         }
         if let Ok(t) = transactions {
+            if 1 == t.len() {
+                return Err(BridgeError::FetchTokenError(
+                    "Transaction not found for token".to_string(),
+                ));
+            }
             // Last transaction at index 0 should have admin wallet as recipient
-            // transaction at index 1 should have customer keplr wallet as recipient
+            // Only checking transaction at index 0 as this is the last transaction done
+            // on given token.
             let admin_transfert = match &t[0].msg {
                 MsgTypes::TransferNft(t) => t,
             };
-            let prev_owner = match &t[1].msg {
-                MsgTypes::TransferNft(t) => t,
-            };
-            if admin_transfert.recipient != keplr_admin_wallet
-                && t[0].sender != req.keplr_wallet_pubkey
-            {
+
+            if admin_transfert.recipient != keplr_admin_wallet {
                 return Err(BridgeError::TokenNotTransferedToAdmin(token.to_string()));
             }
-            if prev_owner.recipient != req.keplr_wallet_pubkey {
+            if t[0].sender != req.keplr_wallet_pubkey {
                 return Err(BridgeError::TokenDidNotBelongToWallet(token.to_string()));
             }
 
             // If token has already been minted, customer needs to know
-            if starknet_manager.project_has_token(&req.project_id, token) {
+            if starknet_manager
+                .project_has_token(&req.project_id, token)
+                .await
+            {
                 return Err(BridgeError::TokenAlreadyMinted(token.to_string()));
             }
             // Mint token on starknet
-            let mint = starknet_manager.mint_project_token(
-                &req.project_id,
-                token,
-                &req.starknet_account_addr,
-            );
+            let mint = starknet_manager
+                .mint_project_token(
+                    &req.starknet_project_addr,
+                    token,
+                    &req.starknet_account_addr,
+                )
+                .await;
+
             match mint {
-                Ok(m) => minted_tokens.push(m),
+                Ok(m) => minted_tokens.insert(token.to_string(), m),
                 Err(_) => return Err(BridgeError::ErrorWhileMintingToken),
-            }
+            };
         }
     }
 

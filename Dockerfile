@@ -1,17 +1,31 @@
-FROM rust:alpine as builder
-RUN apk add openssl-dev build-base git
+FROM rust:1.66-slim-bullseye as builder
+RUN apt update && apt install pkg-config libssl-dev -y
 
-WORKDIR /usr/src/app
+WORKDIR /srv/www
 
-RUN rustup target add x86_64-unknown-linux-musl
-RUN cargo build --release --target x86_64-unknown-linux-musl
+COPY . .
+RUN --mount=type=cache,target=/srv/www/target \
+		--mount=type=cache,target=/usr/local/cargo/registry \
+		--mount=type=cache,target=/usr/local/cargo/git \
+		--mount=type=cache,target=/usr/local/rustup \
+		set -eux; \
+		rustup install stable; \
+	 	cargo build --release; \
+		objcopy --compress-debug-sections target/release/bridge-juno-to-starknet-backend ./bridge-juno-to-starknet-backend
 
-FROM alpine:latest as production-runtime
-RUN apk add openssl-dev build-base git supervisor
 
-RUN mkdir -p /usr/src/app /usr/src/bin
+FROM debian:bullseye-slim as production-runtime
+RUN apt update && apt install libssl-dev -y
+RUN set -eux; \
+		export DEBIAN_FRONTEND=noninteractive; \
+	  apt update; \
+		apt install --yes --no-install-recommends bind9-dnsutils iputils-ping iproute2 curl ca-certificates htop; \
+		apt clean autoclean; \
+		apt autoremove --yes; \
+		rm -rf /var/lib/{apt,dpkg,cache,log}/; \
+		echo "Installed base utils!"
 
-RUN chmod +x /usr/src/bin/carbonable-juno-starknet-bridge
+WORKDIR /srv/www
 
-EXPOSE 8080
-CMD ["supervisord", "--nodaemon", "-c", "/etc/supervisord.conf"]
+COPY --from=builder /srv/www/bridge-juno-to-starknet-backend ./bridge-juno-to-starknet-backend
+CMD ["./bridge-juno-to-starknet-backend"]

@@ -1,10 +1,10 @@
 use async_trait::async_trait;
-use std::{cell::RefCell, collections::HashMap, sync::Mutex};
+use std::{collections::HashMap, sync::Mutex};
 
 use crate::domain::{
     bridge::{
-        MsgTypes, SignedHashValidator, SignedHashValidatorError, StarknetManager, Transaction,
-        TransactionFetchError, TransactionRepository,
+        MintError, MsgTypes, SignedHash, SignedHashValidator, SignedHashValidatorError,
+        StarknetManager, Transaction, TransactionFetchError, TransactionRepository,
     },
     save_customer_data::{CustomerKeys, DataRepository, SaveCustomerDataError},
 };
@@ -15,13 +15,13 @@ pub struct TestSignedHashValidator {}
 impl SignedHashValidator for TestSignedHashValidator {
     fn verify(
         &self,
-        signed_hash: &str,
+        signed_hash: &SignedHash,
         starknet_account_addrr: &str,
         keplr_wallet_pubkey: &str,
     ) -> Result<String, SignedHashValidatorError> {
-        return match signed_hash {
+        return match signed_hash.signature.as_str() {
             "anInvalidHash" => Err(SignedHashValidatorError::FailedToVerifyHash),
-            &_ => Ok(signed_hash.into()),
+            &_ => Ok(signed_hash.signature.to_string()),
         };
     }
 }
@@ -69,27 +69,38 @@ impl InMemoryTransactionRepository {
 }
 
 pub struct InMemoryStarknetTransactionManager {
-    nfts: RefCell<HashMap<String, HashMap<String, String>>>,
+    nfts: Mutex<HashMap<String, HashMap<String, String>>>,
 }
 
+#[async_trait]
 impl StarknetManager for InMemoryStarknetTransactionManager {
-    fn project_has_token(&self, project_id: &str, token_id: &str) -> bool {
-        let nfts = self.nfts.borrow();
-        nfts.contains_key(project_id) && nfts[project_id].contains_key(token_id)
+    async fn project_has_token(&self, project_id: &str, token_id: &str) -> bool {
+        let lock = match self.nfts.lock() {
+            Ok(l) => l,
+            _ => {
+                return false;
+            }
+        };
+
+        lock.contains_key(project_id) && lock[project_id].contains_key(token_id)
     }
 
-    fn mint_project_token(
+    async fn mint_project_token(
         &self,
         project_id: &str,
         token_id: &str,
         starknet_account_addr: &str,
     ) -> Result<String, crate::domain::bridge::MintError> {
-        let mut nfts = self.nfts.borrow_mut();
-        if !nfts.contains_key(project_id) {
-            nfts.insert(project_id.to_string(), HashMap::new());
+        let mut lock = match self.nfts.lock() {
+            Ok(l) => l,
+            _ => return Err(MintError::Failure),
+        };
+
+        if !lock.contains_key(project_id) {
+            lock.insert(project_id.to_string(), HashMap::new());
         }
 
-        nfts.get_mut(project_id)
+        lock.get_mut(project_id)
             .unwrap()
             .insert(token_id.into(), starknet_account_addr.into());
 
@@ -100,7 +111,7 @@ impl StarknetManager for InMemoryStarknetTransactionManager {
 impl InMemoryStarknetTransactionManager {
     pub fn new() -> Self {
         Self {
-            nfts: RefCell::new(HashMap::new()),
+            nfts: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -157,11 +168,11 @@ impl DataRepository for InMemoryDataRepository {
     ) -> Result<CustomerKeys, SaveCustomerDataError> {
         let lock = match self.data.lock() {
             Ok(l) => l,
-            Err(_) => panic!("Failed to acquire lock on data repository"),
+            Err(e) => panic!("Failed to acquire lock on data repository: {:#?}", e),
         };
 
         if !lock.contains_key(keplr_wallet_pubkey)
-            && !lock
+            || !lock
                 .get(keplr_wallet_pubkey)
                 .unwrap()
                 .contains_key(project_id)

@@ -24,6 +24,7 @@ impl SaveCustomerDataRequest {
     }
 }
 
+#[derive(Debug)]
 pub struct CustomerKeys {
     pub keplr_wallet_pubkey: String,
     pub project_id: String,

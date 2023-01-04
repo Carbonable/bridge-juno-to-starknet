@@ -1,24 +1,32 @@
 use std::sync::Arc;
 
 use bridge_juno_to_starknet_backend::{
-    domain::bridge::{
-        handle_bridge_request, BridgeError, BridgeRequest, SignedHashValidator, StarknetManager,
-        Transaction, TransactionRepository,
+    domain::{
+        bridge::{
+            handle_bridge_request, BridgeError, BridgeRequest, SignedHash, SignedHashValidator,
+            StarknetManager, Transaction, TransactionRepository,
+        },
+        save_customer_data::DataRepository,
     },
     infrastructure::in_memory::{
-        InMemoryStarknetTransactionManager, InMemoryTransactionRepository, TestSignedHashValidator,
+        InMemoryDataRepository, InMemoryStarknetTransactionManager, InMemoryTransactionRepository,
+        TestSignedHashValidator,
     },
 };
 use cucumber::{gherkin::Step, given, then, when, World};
+use std::collections::HashMap;
 use std::future::ready;
+
+const STARKNET_PROJECT_ADDR: &str = "starknet_project_addr";
 
 #[derive(Debug, World)]
 struct BridgeWorld {
     request: Option<BridgeRequest>,
-    response: Option<Result<Vec<String>, BridgeError>>,
+    response: Option<Result<HashMap<String, String>, BridgeError>>,
     validator: Option<Arc<dyn SignedHashValidator>>,
     transactions_repository: Option<Arc<dyn TransactionRepository>>,
     starknet_manager: Option<Arc<dyn StarknetManager>>,
+    data_repository: Option<Arc<dyn DataRepository>>,
 }
 impl BridgeWorld {
     fn with_signed_hash_validator(&mut self, validator: Arc<dyn SignedHashValidator>) {
@@ -30,6 +38,9 @@ impl BridgeWorld {
     fn with_starknet_manager(&mut self, manager: Arc<dyn StarknetManager>) {
         self.starknet_manager = Some(manager);
     }
+    fn with_data_repository(&mut self, data_repository: Arc<dyn DataRepository>) {
+        self.data_repository = Some(data_repository);
+    }
 }
 
 impl Default for BridgeWorld {
@@ -40,6 +51,7 @@ impl Default for BridgeWorld {
             validator: None,
             transactions_repository: None,
             starknet_manager: None,
+            data_repository: None,
         }
     }
 }
@@ -51,8 +63,15 @@ fn given_request_with_values(case: &mut BridgeWorld, step: &Step) {
     for row in table.rows.iter().skip(1) {
         // Retrieving col values with number.
         let request = BridgeRequest::new(
-            &row[0],
+            SignedHash {
+                pub_key: bridge_juno_to_starknet_backend::domain::bridge::PubKey {
+                    key_type: "tendermint/PubKeySecp256k1".into(),
+                    key_value: "Avt8e5UqfoRAh0RBUzHCu9arv7UFEFdfcv657h6TtSZE".into(),
+                },
+                signature: row[0].to_string(),
+            },
             &row[1],
+            STARKNET_PROJECT_ADDR,
             &row[2],
             &row[3],
             row[4]
@@ -84,6 +103,7 @@ async fn when_i_execute_the_request(case: &mut BridgeWorld) {
                 case.validator.as_ref().unwrap().clone(),
                 case.transactions_repository.as_ref().unwrap().clone(),
                 case.starknet_manager.as_ref().unwrap().clone(),
+                case.data_repository.as_ref().unwrap().clone(),
             )
             .await,
         )
@@ -120,8 +140,8 @@ fn then_current_owner_is_not_admin(case: &mut BridgeWorld) {
 }
 
 #[then("nfts token should be minted on starknet and response sould be ok")]
-fn then_nfts_should_be_minted_on_starknet(case: &mut BridgeWorld) {
-    let project_id = &case.request.as_ref().unwrap().project_id;
+async fn then_nfts_should_be_minted_on_starknet(case: &mut BridgeWorld) {
+    let starknet_project_id = &case.request.as_ref().unwrap().starknet_project_addr;
     let tokens_id = &case.request.as_ref().unwrap().tokens_id;
     let starknet_manager = case.starknet_manager.as_ref().unwrap().clone();
     if let Some(response) = &case.response {
@@ -129,9 +149,12 @@ fn then_nfts_should_be_minted_on_starknet(case: &mut BridgeWorld) {
             Err(err) => panic!("{:#?}", err),
             Ok(r) => r,
         };
-        for token in tokens_id {
-            if !starknet_manager.project_has_token(project_id, token) {
-                panic!("Token {} has not been minted on starknet", token)
+        for token in tokens_id.as_ref().unwrap() {
+            if !starknet_manager
+                .project_has_token(starknet_project_id, token)
+                .await
+            {
+                panic!("Token {:#?} has not been minted on starknet", token)
             }
         }
     }
@@ -140,9 +163,11 @@ fn then_nfts_should_be_minted_on_starknet(case: &mut BridgeWorld) {
 fn main() {
     let validator = Arc::new(TestSignedHashValidator {});
     let starknet_manager = Arc::new(InMemoryStarknetTransactionManager::new());
+    let data_repository = Arc::new(InMemoryDataRepository::new());
     let world = BridgeWorld::cucumber().before(move |_feature, _rule, _scenario, _world| {
         _world.with_signed_hash_validator(validator.clone());
         _world.with_starknet_manager(starknet_manager.clone());
+        _world.with_data_repository(data_repository.clone());
         Box::pin(ready(()))
     });
 

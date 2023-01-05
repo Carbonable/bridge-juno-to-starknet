@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use log::info;
+use log::{error, info};
 use starknet::{
     accounts::{Account, Call, SingleOwnerAccount},
     core::{
@@ -90,8 +90,22 @@ impl StarknetManager for OnChainStartknetManager {
             .await;
 
         match res {
-            Ok(tx) => Ok(tx.transaction_hash.to_string()),
-            Err(_e) => Err(MintError::Failure),
+            Ok(tx) => {
+                info!(
+                    "Token id {} minting in progress -> #{}",
+                    token_id,
+                    tx.transaction_hash.to_string()
+                );
+                Ok(tx.transaction_hash.to_string())
+            }
+            Err(e) => {
+                error!(
+                    "Error while minting token id {} -> {}",
+                    token_id,
+                    e.to_string()
+                );
+                Err(MintError::Failure)
+            }
         }
     }
 }

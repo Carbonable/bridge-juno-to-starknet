@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use core::fmt::{Debug, Formatter};
-use log::error;
+use log::{error, info};
 use serde_derive::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 
@@ -180,65 +180,91 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
         ));
     }
 
-    let token_ids = match req.tokens_id.is_none() {
-        true => tokens.unwrap(),
-        false => req.tokens_id.as_ref().unwrap().to_vec(),
-    };
-    let mut minted_tokens = HashMap::new();
-    // Should return an array of transactions for given token
-    for token in &token_ids {
-        let transactions = transaction_repository
-            .get_transactions_for_contract(&req.project_id, token.as_str())
-            .await;
-        if transactions.is_err() {
-            return Err(BridgeError::FetchTokenError(token.to_string().into()));
-        }
-        if let Ok(t) = transactions {
-            if 0 == t.len() {
-                error!(
-                    "No transactions found on juno chain for wallet {} and project {}",
-                    &req.keplr_wallet_pubkey, &req.project_id
-                );
-                return Err(BridgeError::FetchTokenError(
-                    "Transaction not found for token".to_string(),
-                ));
-            }
-            // Last transaction at index 0 should have admin wallet as recipient
-            // Only checking transaction at index 0 as this is the last transaction done
-            // on given token.
-            let admin_transfert = match &t[0].msg {
-                MsgTypes::TransferNft(t) => t,
-            };
+    if let Some(req_token) = &req.tokens_id {
+        let token_ids = match req_token.len() {
+            0 => tokens.unwrap(),
+            _ => req_token.to_vec(),
+        };
 
-            if admin_transfert.recipient != keplr_admin_wallet {
-                return Err(BridgeError::TokenNotTransferedToAdmin(token.to_string()));
-            }
-            if t[0].sender != req.keplr_wallet_pubkey {
-                return Err(BridgeError::TokenDidNotBelongToWallet(token.to_string()));
-            }
-
-            // If token has already been minted, customer needs to know
-            if starknet_manager
-                .project_has_token(&req.project_id, token)
-                .await
-            {
-                return Err(BridgeError::TokenAlreadyMinted(token.to_string()));
-            }
-            // Mint token on starknet
-            let mint = starknet_manager
-                .mint_project_token(
-                    &req.starknet_project_addr,
-                    token,
-                    &req.starknet_account_addr,
-                )
+        info!("Migrating tokens : [{}]", token_ids.join(", "));
+        let mut minted_tokens = HashMap::new();
+        // Should return an array of transactions for given token
+        for token in &token_ids {
+            let transactions = transaction_repository
+                .get_transactions_for_contract(&req.project_id, token.as_str())
                 .await;
+            if transactions.is_err() {
+                return Err(BridgeError::FetchTokenError(token.to_string().into()));
+            }
 
-            match mint {
-                Ok(m) => minted_tokens.insert(token.to_string(), m),
-                Err(_) => return Err(BridgeError::ErrorWhileMintingToken),
-            };
+            if let Ok(t) = transactions {
+                if 0 == t.len() {
+                    error!(
+                        "No transactions found on juno chain for wallet {} and project {}",
+                        &req.keplr_wallet_pubkey, &req.project_id
+                    );
+                    return Err(BridgeError::FetchTokenError(
+                        "Transaction not found for token".to_string(),
+                    ));
+                }
+                // Last transaction at index 0 should have admin wallet as recipient
+                // Only checking transaction at index 0 as this is the last transaction done
+                // on given token.
+                let admin_transfert = match &t[0].msg {
+                    MsgTypes::TransferNft(t) => t,
+                };
+
+                if admin_transfert.recipient != keplr_admin_wallet {
+                    error!(
+                        "Token id {} last owner is not admin : {}",
+                        token, keplr_admin_wallet
+                    );
+                    return Err(BridgeError::TokenNotTransferedToAdmin(token.to_string()));
+                }
+                if t[0].sender != req.keplr_wallet_pubkey {
+                    error!(
+                        "Token id {} sender does not match given wallet pubkey {}",
+                        token, req.keplr_wallet_pubkey
+                    );
+                    return Err(BridgeError::TokenDidNotBelongToWallet(token.to_string()));
+                }
+
+                // If token has already been minted, customer needs to know
+                if starknet_manager
+                    .project_has_token(&req.project_id, token)
+                    .await
+                {
+                    error!("Token id {} has already been minted", token);
+                    return Err(BridgeError::TokenAlreadyMinted(token.to_string()));
+                }
+                // Mint token on starknet
+                let mint = starknet_manager
+                    .mint_project_token(
+                        &req.starknet_project_addr,
+                        token,
+                        &req.starknet_account_addr,
+                    )
+                    .await;
+
+                match mint {
+                    Ok(m) => minted_tokens.insert(token.to_string(), m),
+                    Err(_) => {
+                        return {
+                            error!(
+                                "Token id {} encountered an error while minting on contract {}",
+                                token, req.starknet_project_addr
+                            );
+                            Err(BridgeError::ErrorWhileMintingToken)
+                        }
+                    }
+                };
+            }
         }
+
+        return Ok(minted_tokens);
     }
 
-    Ok(minted_tokens)
+    Err(BridgeError::FetchTokenError(
+        "Failed to fetch tokens from database".into(),
+    ))
 }

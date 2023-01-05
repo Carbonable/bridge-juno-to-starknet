@@ -85,7 +85,7 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
         &data.clone().starknet_private_key,
     ));
 
-    match handle_bridge_request(
+    let txs = match handle_bridge_request(
         &req,
         &data.starknet_admin_address,
         hash_validator.clone(),
@@ -98,41 +98,64 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
         Ok(r) => r,
         Err(e) => match e {
             bridge_juno_to_starknet_backend::domain::bridge::BridgeError::InvalidSign => {
-                return web::Json(ApiResponse::bad_request("Invalid sign"));
+                return (
+                    web::Json(ApiResponse::bad_request("Invalid sign")),
+                    http::StatusCode::BAD_REQUEST,
+                );
             }
             BridgeError::JunoBalanceIsNotZero => {
-                return web::Json(ApiResponse::bad_request(
-                    "Juno tokens have not been transferred yet",
-                ));
+                return (
+                    web::Json(ApiResponse::bad_request(
+                        "Juno tokens have not been transferred yet",
+                    )),
+                    http::StatusCode::BAD_REQUEST,
+                );
             }
             BridgeError::FetchTokenError(_) => {
-                return web::Json(ApiResponse::bad_request(
-                    "Failed to fetch tokens from customer wallet",
-                ));
+                return (
+                    web::Json(ApiResponse::bad_request(
+                        "Failed to fetch tokens from customer wallet",
+                    )),
+                    http::StatusCode::NOT_FOUND,
+                );
             }
             BridgeError::TokenNotTransferedToAdmin(_) => {
-                return web::Json(ApiResponse::bad_request("Token not transferred to admin"));
+                return (
+                    web::Json(ApiResponse::bad_request("Token not transferred to admin")),
+                    http::StatusCode::BAD_REQUEST,
+                );
             }
             BridgeError::TokenDidNotBelongToWallet(_) => {
-                return web::Json(ApiResponse::bad_request(
-                    "Token did not belong to provided wallet.",
-                ));
+                return (
+                    web::Json(ApiResponse::bad_request(
+                        "Token did not belong to provided wallet.",
+                    )),
+                    http::StatusCode::BAD_REQUEST,
+                );
             }
             BridgeError::TokenAlreadyMinted(_) => {
-                return web::Json(ApiResponse::bad_request("Token has already been minted"));
+                return (
+                    web::Json(ApiResponse::bad_request("Token has already been minted")),
+                    http::StatusCode::BAD_REQUEST,
+                );
             }
             BridgeError::ErrorWhileMintingToken => {
-                return web::Json(ApiResponse::bad_request("Error while minting token"));
+                return (
+                    web::Json(ApiResponse::bad_request("Error while minting token")),
+                    http::StatusCode::BAD_REQUEST,
+                );
             }
         },
     };
-
-    web::Json(ApiResponse::<Vec<String>> {
-        error: None,
-        message: "".into(),
-        code: 200,
-        body: Some(vec![]),
-    })
+    (
+        web::Json(ApiResponse {
+            error: None,
+            message: "".into(),
+            code: 200,
+            body: Some(txs),
+        }),
+        http::StatusCode::OK,
+    )
 }
 
 #[get("/health")]
@@ -151,7 +174,7 @@ async fn save_customer_tokens(
         &request.keplr_wallet_pubkey, &request.project_id
     );
 
-    let res = match handle_save_customer_data(&request, config.data_repository.clone()).await {
+    let _res = match handle_save_customer_data(&request, config.data_repository.clone()).await {
         Ok(res) => res,
         Err(e) => match e {
             SaveCustomerDataError::NotImpled => {
@@ -210,13 +233,13 @@ struct Args {
     #[arg(long, env = "DATABASE_URL")]
     database_url: String,
     /// Juno admin wallet address
-    #[arg(long, env = "JUNO_ADMIN_ADDR")]
+    #[arg(long, env = "JUNO_ADMIN_ADDRESS")]
     juno_admin_address: String,
     /// Starknet admin wallet address
-    #[arg(long, env = "STARKNET_ADMIN_ADDR")]
+    #[arg(long, env = "STARKNET_ADMIN_ADDRESS")]
     starknet_admin_address: String,
     /// Starknet admin wallet private key
-    #[arg(long, env = "STARKNET_ADMIN_PK")]
+    #[arg(long, env = "STARKNET_ADMIN_PRIVATE_KEY")]
     starknet_admin_private_key: String,
     /// Starknet network id
     #[arg(long, env = "STARKNET_NETWORK_ID")]

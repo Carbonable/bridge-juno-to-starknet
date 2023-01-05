@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use core::fmt::{Debug, Formatter};
+use log::error;
 use serde_derive::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 
@@ -24,7 +25,6 @@ pub struct BridgeRequest {
     pub signed_hash: SignedHash,
     pub starknet_account_addr: String,
     pub starknet_project_addr: String,
-    // pub keplr_wallet_pubkey: [u8; 33],
     pub keplr_wallet_pubkey: String,
     pub project_id: String,
     pub tokens_id: Option<Vec<String>>,
@@ -152,7 +152,7 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
     starknet_manager: Arc<dyn StarknetManager + 'c>,
     data_repository: Arc<dyn DataRepository + 'd>,
 ) -> Result<HashMap<String, String>, BridgeError> {
-    let hash = match hash_validator.verify(
+    match hash_validator.verify(
         &req.signed_hash,
         &req.starknet_account_addr,
         &req.keplr_wallet_pubkey,
@@ -171,6 +171,10 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
     };
 
     if tokens.is_none() && req.tokens_id.is_none() {
+        error!(
+            "No tokens ids found for wallet {} and project {}",
+            &req.keplr_wallet_pubkey, &req.project_id
+        );
         return Err(BridgeError::FetchTokenError(
             "Failed to fetch tokens from database".into(),
         ));
@@ -190,7 +194,11 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
             return Err(BridgeError::FetchTokenError(token.to_string().into()));
         }
         if let Ok(t) = transactions {
-            if 1 == t.len() {
+            if 0 == t.len() {
+                error!(
+                    "No transactions found on juno chain for wallet {} and project {}",
+                    &req.keplr_wallet_pubkey, &req.project_id
+                );
                 return Err(BridgeError::FetchTokenError(
                     "Transaction not found for token".to_string(),
                 ));

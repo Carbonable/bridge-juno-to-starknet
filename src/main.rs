@@ -1,9 +1,13 @@
-use log::info;
+use log::{info, LevelFilter};
+use log4rs::{
+    append::console::ConsoleAppender,
+    config::{Appender, Root},
+};
 use starknet::providers::SequencerGatewayProvider;
 use std::sync::Arc;
 
 use actix_cors::Cors;
-use actix_web::{get, http, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{get, http, post, web, App, HttpServer, Responder};
 use bridge_juno_to_starknet_backend::{
     domain::{
         bridge::{handle_bridge_request, BridgeError, BridgeRequest, SignedHashValidator},
@@ -66,6 +70,11 @@ impl SignedHashValidator for AlwaysTrueSignatureVerifier {
 
 #[post("/bridge")]
 async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl Responder {
+    info!(
+        "POST - /bridge - {} - {:#?}",
+        &req.keplr_wallet_pubkey, &req.tokens_id
+    );
+
     let provider = Arc::new(SequencerGatewayProvider::starknet_alpha_goerli());
 
     let transaction_repository = Arc::new(JunoLcd::new(&data.clone().juno_lcd));
@@ -128,6 +137,7 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
 
 #[get("/health")]
 async fn health() -> impl Responder {
+    info!("GET - /health");
     "I'm ok !"
 }
 
@@ -136,6 +146,11 @@ async fn save_customer_tokens(
     request: web::Json<SaveCustomerDataRequest>,
     config: web::Data<Config>,
 ) -> impl Responder {
+    info!(
+        "POST - /customer/data - {} - {}",
+        &request.keplr_wallet_pubkey, &request.project_id
+    );
+
     let res = match handle_save_customer_data(&request, config.data_repository.clone()).await {
         Ok(res) => res,
         Err(e) => match e {
@@ -220,8 +235,18 @@ struct Config {
     starknet_private_key: String,
 }
 
+fn configure_logger() {
+    let stdout: ConsoleAppender = ConsoleAppender::builder().build();
+    let log_config = log4rs::config::Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .build(Root::builder().appender("stdout").build(LevelFilter::Info))
+        .unwrap();
+    log4rs::init_config(log_config).unwrap();
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    configure_logger();
     info!("Starting bridge application.");
     let args = Args::parse();
     let connection = match get_connection(&args.database_url).await {

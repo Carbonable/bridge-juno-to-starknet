@@ -1,10 +1,10 @@
 use async_trait::async_trait;
+use log::info;
 use starknet::{
     accounts::{Account, Call, SingleOwnerAccount},
     core::{
         chain_id,
         types::{BlockId, CallFunction, FieldElement},
-        utils::get_selector_from_name,
     },
     macros::selector,
     providers::{Provider, SequencerGatewayProvider},
@@ -62,6 +62,10 @@ impl StarknetManager for OnChainStartknetManager {
         token_id: &str,
         starknet_account_addr: &str,
     ) -> Result<String, MintError> {
+        info!(
+            "Trying to mint token {} on project {}",
+            token_id, project_id
+        );
         let provider = self.provider.clone();
         let signer = LocalWallet::from(SigningKey::from_secret_scalar(
             FieldElement::from_hex_be(self.account_private_key.as_str()).unwrap(),
@@ -87,7 +91,7 @@ impl StarknetManager for OnChainStartknetManager {
 
         match res {
             Ok(tx) => Ok(tx.transaction_hash.to_string()),
-            Err(e) => Err(MintError::Failure),
+            Err(_e) => Err(MintError::Failure),
         }
     }
 }

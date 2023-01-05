@@ -57,7 +57,7 @@ pub async fn handle_save_customer_data(
     req: &SaveCustomerDataRequest,
     data_repository: Arc<dyn DataRepository>,
 ) -> Result<(), SaveCustomerDataError> {
-    let saved = match data_repository
+    match data_repository
         .save_customer_keys(CustomerKeys {
             keplr_wallet_pubkey: req.keplr_wallet_pubkey.clone(),
             project_id: req.project_id.clone(),
@@ -65,7 +65,7 @@ pub async fn handle_save_customer_data(
         })
         .await
     {
-        Err(e) => return Err(SaveCustomerDataError::FailedToPersistToDatabase),
+        Err(_e) => return Err(SaveCustomerDataError::FailedToPersistToDatabase),
         Ok(_) => (),
     };
 

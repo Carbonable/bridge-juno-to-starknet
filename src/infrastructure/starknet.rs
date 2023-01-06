@@ -38,7 +38,10 @@ impl OnChainStartknetManager {
 impl StarknetManager for OnChainStartknetManager {
     async fn project_has_token(&self, project_id: &str, token_id: &str) -> bool {
         let provider = self.provider.clone();
-
+        info!(
+            "Checking if project {} has token id {} minted",
+            project_id, token_id
+        );
         let res = provider
             .call_contract(
                 CallFunction {

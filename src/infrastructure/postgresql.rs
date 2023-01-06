@@ -1,5 +1,6 @@
 use crate::domain::save_customer_data::{CustomerKeys, DataRepository, SaveCustomerDataError};
 use async_trait::async_trait;
+use log::error;
 use std::sync::Arc;
 use tokio_postgres::{Client, Error, NoTls};
 
@@ -31,11 +32,13 @@ impl DataRepository for PostgresDataRepository {
             &[&keys.keplr_wallet_pubkey, &keys.project_id, &keys.token_ids]
             ).await;
         if insert.is_err() {
+            error!("Error while inserting customer to database {:#?}", insert);
             let update = self.connection.clone().execute(
                 "UPDATE customer_keys SET token_ids = $1 WHERE keplr_wallet_pubkey = $2 AND project_id = $3",
                 &[&keys.token_ids, &keys.keplr_wallet_pubkey, &keys.project_id]).await;
 
             if update.is_err() {
+                error!("Error while saving customer to database {:#?}", update);
                 return Err(SaveCustomerDataError::FailedToPersistToDatabase);
             }
 

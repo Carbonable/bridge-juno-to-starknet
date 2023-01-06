@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use log::error;
 use reqwest::Response;
 use serde_derive::{Deserialize, Serialize};
 use std::thread::sleep;
@@ -78,17 +79,24 @@ impl TransactionRepository for JunoLcd {
         );
         let response = match self.get(endpoint).await {
             Ok(t) => t,
-            Err(_) => {
+            Err(e) => {
+                error!("fetching Juno blockchain transactions : {:#?}", e);
                 return Err(TransactionFetchError::FetchError(
                     "Failed to call transaction API".into(),
-                ))
+                ));
             }
         };
+        if 500 <= response.status().as_u16() {
+            return Err(TransactionFetchError::JunoBlockchainServerError(
+                response.status().into(),
+            ));
+        }
 
         let txs = match response.json::<TransactionApiResponse>().await {
             Ok(t) => t,
-            Err(_) => return Err(TransactionFetchError::DeserializationFailed),
+            Err(e) => return Err(TransactionFetchError::DeserializationFailed),
         };
+
         let mut domain_tx: Vec<Transaction> = Vec::new();
         for transaction_item in txs.txs.iter() {
             for msg in transaction_item.body.messages.iter() {
@@ -101,6 +109,10 @@ impl TransactionRepository for JunoLcd {
                 }
             }
         }
+
+        // Transaction are returned with the OLDEST in first position, so we need to reverse them
+        // right away
+        domain_tx.reverse();
 
         Ok(domain_tx)
     }

@@ -4,7 +4,7 @@ use log4rs::{
     config::{Appender, Root},
 };
 use starknet::providers::SequencerGatewayProvider;
-use std::sync::Arc;
+use std::{fmt::format, sync::Arc};
 
 use actix_cors::Cors;
 use actix_web::{get, http, post, web, App, HttpServer, Responder};
@@ -87,7 +87,7 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
 
     let txs = match handle_bridge_request(
         &req,
-        &data.starknet_admin_address,
+        &data.juno_admin_address,
         hash_validator.clone(),
         transaction_repository.clone(),
         starknet_manager.clone(),
@@ -97,10 +97,18 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
     {
         Ok(r) => r,
         Err(e) => match e {
-            bridge_juno_to_starknet_backend::domain::bridge::BridgeError::InvalidSign => {
+            BridgeError::InvalidSign => {
                 return (
                     web::Json(ApiResponse::bad_request("Invalid sign")),
                     http::StatusCode::BAD_REQUEST,
+                );
+            }
+            BridgeError::JunoBlockChainServerError(e) => {
+                return (
+                    web::Json(ApiResponse::bad_request(
+                        format!("Juno blockchain error {}", e.to_string().as_str()).as_str(),
+                    )),
+                    http::StatusCode::INTERNAL_SERVER_ERROR,
                 );
             }
             BridgeError::JunoBalanceIsNotZero => {

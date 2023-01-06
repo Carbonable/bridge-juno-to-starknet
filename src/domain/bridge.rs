@@ -82,6 +82,7 @@ pub enum BridgeError {
     TokenDidNotBelongToWallet(String),
     TokenAlreadyMinted(String),
     ErrorWhileMintingToken,
+    JunoBlockChainServerError(u16),
 }
 
 pub enum SignedHashValidatorError {
@@ -107,6 +108,7 @@ impl Debug for dyn SignedHashValidator {
 pub enum TransactionFetchError {
     FetchError(String),
     DeserializationFailed,
+    JunoBlockchainServerError(u16),
 }
 
 #[async_trait]
@@ -194,7 +196,17 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
                 .get_transactions_for_contract(&req.project_id, token.as_str())
                 .await;
             if transactions.is_err() {
-                return Err(BridgeError::FetchTokenError(token.to_string().into()));
+                return match transactions.unwrap_err() {
+                    TransactionFetchError::FetchError(_) => {
+                        Err(BridgeError::FetchTokenError(token.to_string().into()))
+                    }
+                    TransactionFetchError::DeserializationFailed => {
+                        Err(BridgeError::FetchTokenError(token.to_string().into()))
+                    }
+                    TransactionFetchError::JunoBlockchainServerError(e) => {
+                        Err(BridgeError::JunoBlockChainServerError(e))
+                    }
+                };
             }
 
             if let Ok(t) = transactions {
@@ -231,12 +243,13 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
 
                 // If token has already been minted, customer needs to know
                 if starknet_manager
-                    .project_has_token(&req.project_id, token)
+                    .project_has_token(&req.starknet_project_addr, token)
                     .await
                 {
                     error!("Token id {} has already been minted", token);
                     return Err(BridgeError::TokenAlreadyMinted(token.to_string()));
                 }
+
                 // Mint token on starknet
                 let mint = starknet_manager
                     .mint_project_token(

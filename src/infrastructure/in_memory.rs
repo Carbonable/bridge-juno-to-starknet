@@ -3,8 +3,9 @@ use std::{collections::HashMap, sync::Mutex};
 
 use crate::domain::{
     bridge::{
-        MintError, MsgTypes, SignedHash, SignedHashValidator, SignedHashValidatorError,
-        StarknetManager, Transaction, TransactionFetchError, TransactionRepository,
+        MintError, MintTransactionResult, MsgTypes, SignedHash, SignedHashValidator,
+        SignedHashValidatorError, StarknetManager, Transaction, TransactionFetchError,
+        TransactionRepository,
     },
     save_customer_data::{CustomerKeys, DataRepository, SaveCustomerDataError},
 };
@@ -90,7 +91,7 @@ impl StarknetManager for InMemoryStarknetTransactionManager {
         project_id: &str,
         token_id: &str,
         starknet_account_addr: &str,
-    ) -> Result<String, crate::domain::bridge::MintError> {
+    ) -> Result<MintTransactionResult, crate::domain::bridge::MintError> {
         let mut lock = match self.nfts.lock() {
             Ok(l) => l,
             _ => return Err(MintError::Failure),
@@ -104,7 +105,7 @@ impl StarknetManager for InMemoryStarknetTransactionManager {
             .unwrap()
             .insert(token_id.into(), starknet_account_addr.into());
 
-        Ok(token_id.into())
+        Ok((token_id.into(), None))
     }
 }
 

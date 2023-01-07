@@ -130,6 +130,9 @@ pub enum MintError {
     Failure,
 }
 
+// First string is transaction_hash while second is the optionnal error result
+pub type MintTransactionResult = (String, Option<String>);
+
 #[async_trait]
 pub trait StarknetManager {
     async fn project_has_token(&self, project_id: &str, token_id: &str) -> bool;
@@ -138,7 +141,7 @@ pub trait StarknetManager {
         project_id: &str,
         token_id: &str,
         starknet_account_addr: &str,
-    ) -> Result<String, MintError>;
+    ) -> Result<MintTransactionResult, MintError>;
 }
 impl Debug for dyn StarknetManager {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
@@ -153,7 +156,7 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
     transaction_repository: Arc<dyn TransactionRepository + 'b>,
     starknet_manager: Arc<dyn StarknetManager + 'c>,
     data_repository: Arc<dyn DataRepository + 'd>,
-) -> Result<HashMap<String, String>, BridgeError> {
+) -> Result<HashMap<String, MintTransactionResult>, BridgeError> {
     match hash_validator.verify(
         &req.signed_hash,
         &req.starknet_account_addr,

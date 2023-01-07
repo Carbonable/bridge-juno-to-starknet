@@ -3,8 +3,8 @@ use std::sync::Arc;
 use bridge_juno_to_starknet_backend::{
     domain::{
         bridge::{
-            handle_bridge_request, BridgeError, BridgeRequest, SignedHash, SignedHashValidator,
-            StarknetManager, Transaction, TransactionRepository,
+            handle_bridge_request, BridgeError, BridgeRequest, MintTransactionResult, SignedHash,
+            SignedHashValidator, StarknetManager, Transaction, TransactionRepository,
         },
         save_customer_data::DataRepository,
     },
@@ -22,7 +22,7 @@ const STARKNET_PROJECT_ADDR: &str = "starknet_project_addr";
 #[derive(Debug, World)]
 struct BridgeWorld {
     request: Option<BridgeRequest>,
-    response: Option<Result<HashMap<String, String>, BridgeError>>,
+    response: Option<Result<HashMap<String, MintTransactionResult>, BridgeError>>,
     validator: Option<Arc<dyn SignedHashValidator>>,
     transactions_repository: Option<Arc<dyn TransactionRepository>>,
     starknet_manager: Option<Arc<dyn StarknetManager>>,

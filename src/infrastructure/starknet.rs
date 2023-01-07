@@ -4,15 +4,19 @@ use starknet::{
     accounts::{Account, Call, SingleOwnerAccount},
     core::{
         chain_id,
-        types::{BlockId, CallFunction, FieldElement},
+        types::{AddTransactionResult, BlockId, CallFunction, FieldElement, TransactionStatus},
     },
     macros::selector,
     providers::{Provider, SequencerGatewayProvider},
     signers::{LocalWallet, SigningKey},
 };
 use std::sync::Arc;
+use tokio::time::{sleep, Duration};
 
-use crate::domain::bridge::{MintError, StarknetManager};
+use crate::domain::bridge::{MintError, MintTransactionResult, StarknetManager};
+
+const TRANSACTION_CHECK_MAX_RETRY: u8 = 30;
+const TRANSACTION_CHECK_WAIT_TIME: u64 = 5;
 
 pub struct OnChainStartknetManager {
     provider: Arc<SequencerGatewayProvider>,
@@ -31,6 +35,51 @@ impl OnChainStartknetManager {
             account_address: account_addr.to_string(),
             account_private_key: account_pk.to_string(),
         }
+    }
+
+    async fn check_transaction_status(&self, tx_result: &AddTransactionResult) -> Option<String> {
+        info!(
+            "Checking transaction status : {}",
+            hex::encode(tx_result.transaction_hash.to_bytes_be())
+        );
+        let provider = self.provider.clone();
+        let mut retry_count = 0;
+        while TRANSACTION_CHECK_MAX_RETRY >= retry_count {
+            retry_count += 1;
+            let tx_status_info = &provider
+                .get_transaction_status(
+                    FieldElement::from_dec_str(&tx_result.transaction_hash.to_string()).unwrap(),
+                )
+                .await;
+
+            if tx_status_info.is_err() {
+                sleep(Duration::from_secs(TRANSACTION_CHECK_WAIT_TIME)).await;
+                continue;
+            }
+
+            let tx = tx_status_info.as_ref().unwrap();
+            if TransactionStatus::Rejected == tx.status {
+                return match &tx.transaction_failure_reason {
+                    Some(fr) => Some(fr.code.to_string()),
+                    None => None,
+                };
+            }
+            if TransactionStatus::AcceptedOnL2 == tx.status
+                || TransactionStatus::AcceptedOnL1 == tx.status
+            {
+                info!(
+                    "Transaction with hash {}, has status : {:#?}",
+                    hex::encode(tx_result.transaction_hash.to_bytes_be()),
+                    tx.status
+                );
+                return None;
+            }
+
+            sleep(Duration::from_secs(TRANSACTION_CHECK_WAIT_TIME)).await;
+            continue;
+        }
+
+        return None;
     }
 }
 
@@ -64,7 +113,7 @@ impl StarknetManager for OnChainStartknetManager {
         project_id: &str,
         token_id: &str,
         starknet_account_addr: &str,
-    ) -> Result<String, MintError> {
+    ) -> Result<MintTransactionResult, MintError> {
         info!(
             "Trying to mint token {} on project {}",
             token_id, project_id
@@ -97,9 +146,15 @@ impl StarknetManager for OnChainStartknetManager {
                 info!(
                     "Token id {} minting in progress -> #{}",
                     token_id,
-                    tx.transaction_hash.to_string()
+                    hex::encode(tx.transaction_hash.to_bytes_be())
                 );
-                Ok(tx.transaction_hash.to_string())
+
+                let tx_status_info = self.check_transaction_status(&tx).await;
+
+                Ok((
+                    hex::encode(tx.transaction_hash.to_bytes_be()),
+                    tx_status_info,
+                ))
             }
             Err(e) => {
                 error!(

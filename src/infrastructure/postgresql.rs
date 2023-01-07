@@ -27,6 +27,7 @@ impl PostgresDataRepository {
 #[async_trait]
 impl DataRepository for PostgresDataRepository {
     async fn save_customer_keys(&self, keys: CustomerKeys) -> Result<(), SaveCustomerDataError> {
+        println!("{:#?}", self.connection.clone());
         let insert = self.connection.clone().execute(
             "INSERT INTO customer_keys (keplr_wallet_pubkey, project_id, token_ids) VALUES ($1, $2, $3)",
             &[&keys.keplr_wallet_pubkey, &keys.project_id, &keys.token_ids]

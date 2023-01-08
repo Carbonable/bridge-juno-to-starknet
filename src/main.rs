@@ -167,9 +167,17 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
 }
 
 #[get("/health")]
-async fn health() -> impl Responder {
+async fn health(config: web::Data<Config>) -> impl Responder {
     info!("GET - /health");
-    "I'm ok !"
+    let connection = match get_connection(&config.database_url).await {
+        Ok(c) => Arc::new(c),
+        Err(e) => panic!("Failed to connect to database error : {}", e),
+    };
+    if connection.is_closed() {
+        return ("I'm not ok", http::StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    ("I'm ok !", http::StatusCode::OK)
 }
 
 #[post("/customer/data")]
@@ -259,6 +267,7 @@ struct Args {
 
 struct Config {
     juno_lcd: String,
+    database_url: String,
     data_repository: Arc<dyn DataRepository>,
     starknet_provider: Arc<SequencerGatewayProvider>,
     juno_admin_address: String,
@@ -304,6 +313,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(Config {
                 juno_lcd: String::from(&args.juno_lcd),
+                database_url: String::from(&args.database_url),
                 data_repository: data_repository.clone(),
                 juno_admin_address: String::from(&args.juno_admin_address),
                 starknet_admin_address: String::from(&args.starknet_admin_address),

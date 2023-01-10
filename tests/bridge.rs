@@ -99,7 +99,8 @@ async fn when_i_execute_the_request(case: &mut BridgeWorld) {
         case.response = Some(
             handle_bridge_request(
                 request,
-                "admin-account",
+                "juno-admin-account",
+                "starknet-admin-account",
                 case.validator.as_ref().unwrap().clone(),
                 case.transactions_repository.as_ref().unwrap().clone(),
                 case.starknet_manager.as_ref().unwrap().clone(),
@@ -124,7 +125,18 @@ fn then_keplr_provided_wallet_incorrect(case: &mut BridgeWorld) {
     if let Some(response) = &case.response {
         let _err = match response {
             Err(err) => err,
-            Ok(_o) => panic!("Keplr wallet is incorrect please check implementation"),
+            Ok(res) => {
+                if res.contains_key("255") {
+                    if let Some((_token, err)) = res.get("255") {
+                        if err.is_none() {
+                            panic!("Provided keplr wallet should not be correct, please check implementation");
+                        }
+                    } else {
+                        panic!("Should not fall into this case");
+                    }
+                }
+                &BridgeError::InvalidSign
+            }
         };
     };
 }
@@ -134,7 +146,18 @@ fn then_current_owner_is_not_admin(case: &mut BridgeWorld) {
     if let Some(response) = &case.response {
         let _err = match response {
             Err(err) => err,
-            Ok(_o) => panic!("Keplr wallet is incorrect please check implementation"),
+            Ok(res) => {
+                if res.contains_key("255") {
+                    if let Some((_token, err)) = res.get("255") {
+                        if err.is_none() {
+                            panic!("Provided keplr wallet should not be correct, please check implementation");
+                        }
+                    } else {
+                        panic!("Should not fall into this case");
+                    }
+                }
+                &BridgeError::InvalidSign
+            }
         };
     };
 }

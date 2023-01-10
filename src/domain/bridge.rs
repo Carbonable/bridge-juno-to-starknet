@@ -152,6 +152,7 @@ impl Debug for dyn StarknetManager {
 pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
     req: &BridgeRequest,
     keplr_admin_wallet: &str,
+    starknet_admin_address: &str,
     hash_validator: Arc<dyn SignedHashValidator + 'a>,
     transaction_repository: Arc<dyn TransactionRepository + 'b>,
     starknet_manager: Arc<dyn StarknetManager + 'c>,
@@ -159,7 +160,7 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
 ) -> Result<HashMap<String, MintTransactionResult>, BridgeError> {
     match hash_validator.verify(
         &req.signed_hash,
-        &req.starknet_account_addr,
+        &starknet_admin_address,
         &req.keplr_wallet_pubkey,
     ) {
         Ok(h) => h,
@@ -193,21 +194,38 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
 
         info!("Migrating tokens : [{}]", token_ids.join(", "));
         let mut minted_tokens = HashMap::new();
-        // Should return an array of transactions for given token
         for token in &token_ids {
             let transactions = transaction_repository
                 .get_transactions_for_contract(&req.project_id, token.as_str())
                 .await;
             if transactions.is_err() {
-                return match transactions.unwrap_err() {
+                match transactions.unwrap_err() {
                     TransactionFetchError::FetchError(_) => {
-                        Err(BridgeError::FetchTokenError(token.to_string().into()))
+                        minted_tokens.insert(
+                            token.to_string(),
+                            (
+                                token.to_string(),
+                                Some("Failed to fecth token data from juno chain.".into()),
+                            ),
+                        );
+                        continue;
                     }
                     TransactionFetchError::DeserializationFailed => {
-                        Err(BridgeError::FetchTokenError(token.to_string().into()))
+                        minted_tokens.insert(
+                            token.to_string(),
+                            (
+                                token.to_string(),
+                                Some("Failed to deserialize data from juno blockchain".into()),
+                            ),
+                        );
+                        continue;
                     }
                     TransactionFetchError::JunoBlockchainServerError(e) => {
-                        Err(BridgeError::JunoBlockChainServerError(e))
+                        minted_tokens.insert(token.to_string(),(
+                        token.to_string(),
+                        Some("Juno node responded with an error status please try again later".into()),
+                    ));
+                        continue;
                     }
                 };
             }
@@ -218,9 +236,14 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
                         "No transactions found on juno chain for wallet {} and project {}",
                         &req.keplr_wallet_pubkey, &req.project_id
                     );
-                    return Err(BridgeError::FetchTokenError(
-                        "Transaction not found for token".to_string(),
-                    ));
+                    minted_tokens.insert(
+                        token.to_string(),
+                        (
+                            token.to_string(),
+                            Some("Transaction not found on chain.".into()),
+                        ),
+                    );
+                    continue;
                 }
                 // Last transaction at index 0 should have admin wallet as recipient
                 // Only checking transaction at index 0 as this is the last transaction done
@@ -234,14 +257,28 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
                         "Token id {} last owner is not admin : {}",
                         token, keplr_admin_wallet
                     );
-                    return Err(BridgeError::TokenNotTransferedToAdmin(token.to_string()));
+                    minted_tokens.insert(
+                        token.to_string(),
+                        (
+                            token.to_string(),
+                            Some("Token was not transfered to admin".into()),
+                        ),
+                    );
+                    continue;
                 }
                 if t[0].sender != req.keplr_wallet_pubkey {
                     error!(
                         "Token id {} sender does not match given wallet pubkey {}",
                         token, req.keplr_wallet_pubkey
                     );
-                    return Err(BridgeError::TokenDidNotBelongToWallet(token.to_string()));
+                    minted_tokens.insert(
+                        token.to_string(),
+                        (
+                            token.to_string(),
+                            Some("Token sender didn't match customer wallet public key".into()),
+                        ),
+                    );
+                    continue;
                 }
 
                 // If token has already been minted, customer needs to know
@@ -250,7 +287,14 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
                     .await
                 {
                     error!("Token id {} has already been minted", token);
-                    return Err(BridgeError::TokenAlreadyMinted(token.to_string()));
+                    minted_tokens.insert(
+                        token.to_string(),
+                        (
+                            token.to_string(),
+                            Some("Token has already been minted".into()),
+                        ),
+                    );
+                    continue;
                 }
 
                 // Mint token on starknet
@@ -265,13 +309,11 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
                 match mint {
                     Ok(m) => minted_tokens.insert(token.to_string(), m),
                     Err(_) => {
-                        return {
-                            error!(
-                                "Token id {} encountered an error while minting on contract {}",
-                                token, req.starknet_project_addr
-                            );
-                            Err(BridgeError::ErrorWhileMintingToken)
-                        }
+                        minted_tokens.insert(
+                            token.to_string(),
+                            (token.to_string(), Some("Error while minting token".into())),
+                        );
+                        continue;
                     }
                 };
             }

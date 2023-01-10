@@ -26,7 +26,7 @@ Feature: Bridge between Juno and Starknet for carbonABLE NFT's
                     "contract": "projectId",
                     "msg": {
                         "transfer_nft": {
-                            "recipient": "admin-account",
+                            "recipient": "juno-admin-account",
                             "token_id": "255"
                         }
                     }
@@ -78,7 +78,7 @@ Feature: Bridge between Juno and Starknet for carbonABLE NFT's
                     "contract": "projectId",
                     "msg": {
                         "transfer_nft": {
-                            "recipient": "not-admin-account",
+                            "recipient": "not-juno-admin-account",
                             "token_id": "255"
                         }
                     }
@@ -110,7 +110,7 @@ Feature: Bridge between Juno and Starknet for carbonABLE NFT's
                     "contract": "projectId",
                     "msg": {
                         "transfer_nft": {
-                            "recipient": "admin-account",
+                            "recipient": "juno-admin-account",
                             "token_id": "255"
                         }
                     }

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use log::{error, info};
 use starknet::{
-    accounts::{Account, Call, SingleOwnerAccount},
+    accounts::{Account, AccountCall, Call, SingleOwnerAccount},
     core::{
         chain_id,
         types::{AddTransactionResult, BlockId, CallFunction, FieldElement, TransactionStatus},
@@ -128,18 +128,20 @@ impl StarknetManager for OnChainStartknetManager {
 
         let account = SingleOwnerAccount::new(provider, signer, address, chain_id::TESTNET);
 
-        let res = account
-            .execute(&[Call {
-                to: FieldElement::from_hex_be(project_id).unwrap(),
-                selector: selector!("mint"),
-                calldata: vec![
-                    to,
-                    FieldElement::from_dec_str(token_id).unwrap(),
-                    FieldElement::ZERO,
-                ],
-            }])
-            .send()
-            .await;
+        let account_attached_call = account.execute(&[Call {
+            to: FieldElement::from_hex_be(project_id).unwrap(),
+            selector: selector!("mint"),
+            calldata: vec![
+                to,
+                FieldElement::from_dec_str(token_id).unwrap(),
+                FieldElement::ZERO,
+            ],
+        }]);
+
+        // This value is set only to allow transactions during spike time
+        let account_attached_call = account_attached_call.fee_estimate_multiplier(10.0);
+
+        let res = account_attached_call.send().await;
 
         match res {
             Ok(tx) => {

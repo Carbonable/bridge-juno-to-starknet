@@ -10,7 +10,10 @@ use actix_cors::Cors;
 use actix_web::{get, http, post, web, App, HttpServer, Responder};
 use bridge_juno_to_starknet_backend::{
     domain::{
-        bridge::{handle_bridge_request, BridgeError, BridgeRequest, SignedHashValidator},
+        bridge::{
+            handle_bridge_request, BridgeError, BridgeRequest, SignedHashValidator,
+            SignedHashValidatorError,
+        },
         save_customer_data::{
             handle_save_customer_data, DataRepository, SaveCustomerDataError,
             SaveCustomerDataRequest,
@@ -52,11 +55,24 @@ impl<T> ApiResponse<T> {
     }
 }
 
-// Boilerplate code to replace with real implementation
-// @todo: implement real secp256k1 real signature verification
-struct AlwaysTrueSignatureVerifier {}
+// // Boilerplate code to replace with real implementation
+// // @todo: implement real secp256k1 real signature verification
+// struct AlwaysTrueSignatureVerifier {}
+//
+// impl SignedHashValidator for AlwaysTrueSignatureVerifier {
+//     fn verify(
+//         &self,
+//         signed_hash: &bridge_juno_to_starknet_backend::domain::bridge::SignedHash,
+//         starknet_account_addrr: &str,
+//         keplr_wallet_pubkey: &str,
+//     ) -> Result<String, bridge_juno_to_starknet_backend::domain::bridge::SignedHashValidatorError>
+//     {
+//         Ok(signed_hash.signature.to_string())
+//     }
+// }
 
-impl SignedHashValidator for AlwaysTrueSignatureVerifier {
+struct KeplrSignatureVeirfier {}
+impl SignedHashValidator for KeplrSignatureVeirfier {
     fn verify(
         &self,
         signed_hash: &bridge_juno_to_starknet_backend::domain::bridge::SignedHash,
@@ -64,7 +80,29 @@ impl SignedHashValidator for AlwaysTrueSignatureVerifier {
         keplr_wallet_pubkey: &str,
     ) -> Result<String, bridge_juno_to_starknet_backend::domain::bridge::SignedHashValidatorError>
     {
-        Ok(signed_hash.signature.to_string())
+        let pubkey = signed_hash.pub_key.key_value.to_string();
+        let signature = verify_keplr_sign::Signature {
+            pub_key: verify_keplr_sign::PublicKey {
+                sig_type: signed_hash.pub_key.key_type.to_string(),
+                sig_value: pubkey.to_string(),
+            },
+            signature: signed_hash.signature.to_string(),
+        };
+
+        let is_signature_ok = verify_keplr_sign::verify_arbitrary(
+            keplr_wallet_pubkey,
+            &pubkey,
+            starknet_account_addrr.as_bytes(),
+            &signature,
+        );
+
+        println!("{}", is_signature_ok);
+
+        if !is_signature_ok {
+            return Err(SignedHashValidatorError::FailedToVerifyHash);
+        }
+
+        Ok(signature.signature)
     }
 }
 
@@ -78,7 +116,7 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
     let provider = Arc::new(SequencerGatewayProvider::starknet_alpha_goerli());
 
     let transaction_repository = Arc::new(JunoLcd::new(&data.clone().juno_lcd));
-    let hash_validator = Arc::new(AlwaysTrueSignatureVerifier {});
+    let hash_validator = Arc::new(KeplrSignatureVeirfier {});
     let starknet_manager = Arc::new(OnChainStartknetManager::new(
         provider.clone(),
         &data.clone().starknet_admin_address,
@@ -88,6 +126,7 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
     let txs = match handle_bridge_request(
         &req,
         &data.juno_admin_address,
+        &data.starknet_admin_address,
         hash_validator.clone(),
         transaction_repository.clone(),
         starknet_manager.clone(),
@@ -155,28 +194,42 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
             }
         },
     };
+    let mut http_status = http::StatusCode::OK;
+    for (_token, (_msg, err)) in txs.iter() {
+        http_status = match err {
+            None => break,
+            Some(s) => match s.as_str() {
+                "Failed to fecth token data from juno chain." => http::StatusCode::BAD_REQUEST,
+                "Juno node responded with an error status please try again later" => {
+                    http::StatusCode::INTERNAL_SERVER_ERROR
+                }
+                "Transaction not found on chain." => http::StatusCode::NOT_FOUND,
+                // Catching everything into BAD_REQUEST, only handle the other cases.
+                _ => http::StatusCode::BAD_REQUEST,
+            },
+        };
+    }
+
     (
         web::Json(ApiResponse {
             error: None,
             message: "".into(),
-            code: 200,
+            code: match http_status {
+                http::StatusCode::OK => 200,
+                http::StatusCode::BAD_REQUEST => 400,
+                http::StatusCode::NOT_FOUND => 404,
+                http::StatusCode::INTERNAL_SERVER_ERROR => 500,
+                _ => 200,
+            },
             body: Some(txs),
         }),
-        http::StatusCode::OK,
+        http_status,
     )
 }
 
 #[get("/health")]
-async fn health(config: web::Data<Config>) -> impl Responder {
+async fn health() -> impl Responder {
     info!("GET - /health");
-    let connection = match get_connection(&config.database_url).await {
-        Ok(c) => Arc::new(c),
-        Err(e) => panic!("Failed to connect to database error : {}", e),
-    };
-    if connection.is_closed() {
-        return ("I'm not ok", http::StatusCode::SERVICE_UNAVAILABLE);
-    }
-
     ("I'm ok !", http::StatusCode::OK)
 }
 

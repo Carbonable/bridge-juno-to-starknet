@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bridge_juno_to_starknet_backend::{
     domain::{
         bridge::{
-            handle_bridge_request, BridgeError, BridgeRequest, MintTransactionResult, SignedHash,
+            handle_bridge_request, BridgeError, BridgeRequest, BridgeResponse, SignedHash,
             SignedHashValidator, StarknetManager, Transaction, TransactionRepository,
         },
         save_customer_data::DataRepository,
@@ -14,7 +14,6 @@ use bridge_juno_to_starknet_backend::{
     },
 };
 use cucumber::{gherkin::Step, given, then, when, World};
-use std::collections::HashMap;
 use std::future::ready;
 
 const STARKNET_PROJECT_ADDR: &str = "starknet_project_addr";
@@ -22,7 +21,7 @@ const STARKNET_PROJECT_ADDR: &str = "starknet_project_addr";
 #[derive(Debug, World)]
 struct BridgeWorld {
     request: Option<BridgeRequest>,
-    response: Option<Result<HashMap<String, MintTransactionResult>, BridgeError>>,
+    response: Option<Result<BridgeResponse, BridgeError>>,
     validator: Option<Arc<dyn SignedHashValidator>>,
     transactions_repository: Option<Arc<dyn TransactionRepository>>,
     starknet_manager: Option<Arc<dyn StarknetManager>>,
@@ -126,8 +125,8 @@ fn then_keplr_provided_wallet_incorrect(case: &mut BridgeWorld) {
         let _err = match response {
             Err(err) => err,
             Ok(res) => {
-                if res.contains_key("255") {
-                    if let Some((_token, err)) = res.get("255") {
+                if res.checks.contains_key("255") {
+                    if let Some((_token, err)) = res.checks.get("255") {
                         if err.is_none() {
                             panic!("Provided keplr wallet should not be correct, please check implementation");
                         }
@@ -147,8 +146,8 @@ fn then_current_owner_is_not_admin(case: &mut BridgeWorld) {
         let _err = match response {
             Err(err) => err,
             Ok(res) => {
-                if res.contains_key("255") {
-                    if let Some((_token, err)) = res.get("255") {
+                if res.checks.contains_key("255") {
+                    if let Some((_token, err)) = res.checks.get("255") {
                         if err.is_none() {
                             panic!("Provided keplr wallet should not be correct, please check implementation");
                         }

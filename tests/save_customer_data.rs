@@ -72,7 +72,7 @@ async fn then_data_should_have_been_persited(case: &mut SaveCustomerDataWorld) {
     let repo = case.data_repository.as_ref().unwrap().clone();
     let req = case.request.as_ref().unwrap();
 
-    let customer_keys = match repo
+    let _customer_keys = match repo
         .get_customer_keys(&req.keplr_wallet_pubkey, &req.project_id)
         .await
     {

@@ -139,9 +139,9 @@ pub trait StarknetManager {
     async fn mint_project_token(
         &self,
         project_id: &str,
-        token_id: &str,
+        tokens: &[String],
         starknet_account_addr: &str,
-    ) -> Result<MintTransactionResult, MintError>;
+    ) -> Result<String, MintError>;
 }
 impl Debug for dyn StarknetManager {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
@@ -149,6 +149,15 @@ impl Debug for dyn StarknetManager {
     }
 }
 
+type MintPreChecks = HashMap<String, (String, Option<String>)>;
+// Represents the response as [token_ids], Transaction hash
+type MintResult = (Vec<String>, String);
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BridgeResponse {
+    pub checks: MintPreChecks,
+    pub result: MintResult,
+}
 pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
     req: &BridgeRequest,
     keplr_admin_wallet: &str,
@@ -157,7 +166,7 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
     transaction_repository: Arc<dyn TransactionRepository + 'b>,
     starknet_manager: Arc<dyn StarknetManager + 'c>,
     data_repository: Arc<dyn DataRepository + 'd>,
-) -> Result<HashMap<String, MintTransactionResult>, BridgeError> {
+) -> Result<BridgeResponse, BridgeError> {
     match hash_validator.verify(
         &req.signed_hash,
         &starknet_admin_address,
@@ -193,7 +202,7 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
         };
 
         info!("Migrating tokens : [{}]", token_ids.join(", "));
-        let mut minted_tokens = HashMap::new();
+        let mut checked_tokens = HashMap::new();
         for token in &token_ids {
             let transactions = transaction_repository
                 .get_transactions_for_contract(&req.project_id, token.as_str())
@@ -201,7 +210,7 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
             if transactions.is_err() {
                 match transactions.unwrap_err() {
                     TransactionFetchError::FetchError(_) => {
-                        minted_tokens.insert(
+                        checked_tokens.insert(
                             token.to_string(),
                             (
                                 token.to_string(),
@@ -211,7 +220,7 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
                         continue;
                     }
                     TransactionFetchError::DeserializationFailed => {
-                        minted_tokens.insert(
+                        checked_tokens.insert(
                             token.to_string(),
                             (
                                 token.to_string(),
@@ -220,8 +229,8 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
                         );
                         continue;
                     }
-                    TransactionFetchError::JunoBlockchainServerError(e) => {
-                        minted_tokens.insert(token.to_string(),(
+                    TransactionFetchError::JunoBlockchainServerError(_e) => {
+                        checked_tokens.insert(token.to_string(),(
                         token.to_string(),
                         Some("Juno node responded with an error status please try again later".into()),
                     ));
@@ -236,7 +245,7 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
                         "No transactions found on juno chain for wallet {} and project {}",
                         &req.keplr_wallet_pubkey, &req.project_id
                     );
-                    minted_tokens.insert(
+                    checked_tokens.insert(
                         token.to_string(),
                         (
                             token.to_string(),
@@ -257,7 +266,7 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
                         "Token id {} last owner is not admin : {}",
                         token, keplr_admin_wallet
                     );
-                    minted_tokens.insert(
+                    checked_tokens.insert(
                         token.to_string(),
                         (
                             token.to_string(),
@@ -271,7 +280,7 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
                         "Token id {} sender does not match given wallet pubkey {}",
                         token, req.keplr_wallet_pubkey
                     );
-                    minted_tokens.insert(
+                    checked_tokens.insert(
                         token.to_string(),
                         (
                             token.to_string(),
@@ -287,7 +296,7 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
                     .await
                 {
                     error!("Token id {} has already been minted", token);
-                    minted_tokens.insert(
+                    checked_tokens.insert(
                         token.to_string(),
                         (
                             token.to_string(),
@@ -297,29 +306,45 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
                     continue;
                 }
 
-                // Mint token on starknet
-                let mint = starknet_manager
-                    .mint_project_token(
-                        &req.starknet_project_addr,
-                        token,
-                        &req.starknet_account_addr,
-                    )
-                    .await;
-
-                match mint {
-                    Ok(m) => minted_tokens.insert(token.to_string(), m),
-                    Err(_) => {
-                        minted_tokens.insert(
-                            token.to_string(),
-                            (token.to_string(), Some("Error while minting token".into())),
-                        );
-                        continue;
-                    }
-                };
+                checked_tokens.insert(token.to_string(), (token.to_string(), None));
             }
         }
 
-        return Ok(minted_tokens);
+        let mut token_to_mint = Vec::new();
+        for (token, (_msg, err)) in checked_tokens.iter() {
+            if err.is_none() {
+                token_to_mint.push(token.to_string());
+            }
+        }
+
+        if 0 == token_to_mint.len() {
+            return Ok(BridgeResponse {
+                checks: checked_tokens,
+                result: (vec![], "".to_string()),
+            });
+        }
+
+        // Mint token on starknet
+        let mint = starknet_manager
+            .mint_project_token(
+                &req.starknet_project_addr,
+                token_to_mint.as_slice(),
+                &req.starknet_account_addr,
+            )
+            .await;
+
+        let transaction_hash = match mint {
+            Ok(m) => m,
+            Err(_) => return Err(BridgeError::ErrorWhileMintingToken),
+        };
+
+        return Ok(BridgeResponse {
+            checks: checked_tokens,
+            result: (
+                token_to_mint.iter().map(|t| t.to_string()).collect(),
+                transaction_hash,
+            ),
+        });
     }
 
     Err(BridgeError::FetchTokenError(

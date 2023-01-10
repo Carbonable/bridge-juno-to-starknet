@@ -94,7 +94,7 @@ impl TransactionRepository for JunoLcd {
 
         let txs = match response.json::<TransactionApiResponse>().await {
             Ok(t) => t,
-            Err(e) => return Err(TransactionFetchError::DeserializationFailed),
+            Err(_e) => return Err(TransactionFetchError::DeserializationFailed),
         };
 
         let mut domain_tx: Vec<Transaction> = Vec::new();

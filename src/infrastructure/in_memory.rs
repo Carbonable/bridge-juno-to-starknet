@@ -3,9 +3,8 @@ use std::{collections::HashMap, sync::Mutex};
 
 use crate::domain::{
     bridge::{
-        MintError, MintTransactionResult, MsgTypes, SignedHash, SignedHashValidator,
-        SignedHashValidatorError, StarknetManager, Transaction, TransactionFetchError,
-        TransactionRepository,
+        MintError, MsgTypes, SignedHash, SignedHashValidator, SignedHashValidatorError,
+        StarknetManager, Transaction, TransactionFetchError, TransactionRepository,
     },
     save_customer_data::{CustomerKeys, DataRepository, SaveCustomerDataError},
 };
@@ -89,9 +88,9 @@ impl StarknetManager for InMemoryStarknetTransactionManager {
     async fn mint_project_token(
         &self,
         project_id: &str,
-        token_id: &str,
+        tokens: &[String],
         starknet_account_addr: &str,
-    ) -> Result<MintTransactionResult, crate::domain::bridge::MintError> {
+    ) -> Result<String, crate::domain::bridge::MintError> {
         let mut lock = match self.nfts.lock() {
             Ok(l) => l,
             _ => return Err(MintError::Failure),
@@ -101,11 +100,13 @@ impl StarknetManager for InMemoryStarknetTransactionManager {
             lock.insert(project_id.to_string(), HashMap::new());
         }
 
-        lock.get_mut(project_id)
-            .unwrap()
-            .insert(token_id.into(), starknet_account_addr.into());
+        for token_id in tokens {
+            lock.get_mut(project_id)
+                .unwrap()
+                .insert(token_id.to_string(), starknet_account_addr.into());
+        }
 
-        Ok((token_id.into(), None))
+        Ok("0xHExaD3c1m4lTr4ns4ct10nH4sH".to_string())
     }
 }
 

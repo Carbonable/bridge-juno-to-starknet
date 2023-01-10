@@ -4,7 +4,7 @@ use log4rs::{
     config::{Appender, Root},
 };
 use starknet::providers::SequencerGatewayProvider;
-use std::{fmt::format, sync::Arc};
+use std::sync::Arc;
 
 use actix_cors::Cors;
 use actix_web::{get, http, post, web, App, HttpServer, Responder};
@@ -105,7 +105,7 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
         &data.clone().starknet_private_key,
     ));
 
-    let txs = match handle_bridge_request(
+    let response = match handle_bridge_request(
         &req,
         &data.juno_admin_address,
         &data.starknet_admin_address,
@@ -177,7 +177,7 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
         },
     };
     let mut http_status = http::StatusCode::OK;
-    for (_token, (_msg, err)) in txs.iter() {
+    for (_token, (_msg, err)) in response.checks.iter() {
         http_status = match err {
             None => break,
             Some(s) => match s.as_str() {
@@ -203,7 +203,7 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
                 http::StatusCode::INTERNAL_SERVER_ERROR => 500,
                 _ => 200,
             },
-            body: Some(txs),
+            body: Some(response),
         }),
         http_status,
     )

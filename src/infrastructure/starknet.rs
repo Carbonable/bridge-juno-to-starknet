@@ -4,19 +4,15 @@ use starknet::{
     accounts::{Account, AccountCall, Call, SingleOwnerAccount},
     core::{
         chain_id,
-        types::{AddTransactionResult, BlockId, CallFunction, FieldElement, TransactionStatus},
+        types::{BlockId, CallFunction, FieldElement},
     },
     macros::selector,
     providers::{Provider, SequencerGatewayProvider},
     signers::{LocalWallet, SigningKey},
 };
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
 
-use crate::domain::bridge::{MintError, MintTransactionResult, StarknetManager};
-
-const TRANSACTION_CHECK_MAX_RETRY: u8 = 30;
-const TRANSACTION_CHECK_WAIT_TIME: u64 = 5;
+use crate::domain::bridge::{MintError, StarknetManager};
 
 pub struct OnChainStartknetManager {
     provider: Arc<SequencerGatewayProvider>,
@@ -35,51 +31,6 @@ impl OnChainStartknetManager {
             account_address: account_addr.to_string(),
             account_private_key: account_pk.to_string(),
         }
-    }
-
-    async fn check_transaction_status(&self, tx_result: &AddTransactionResult) -> Option<String> {
-        info!(
-            "Checking transaction status : {}",
-            hex::encode(tx_result.transaction_hash.to_bytes_be())
-        );
-        let provider = self.provider.clone();
-        let mut retry_count = 0;
-        while TRANSACTION_CHECK_MAX_RETRY >= retry_count {
-            retry_count += 1;
-            let tx_status_info = &provider
-                .get_transaction_status(
-                    FieldElement::from_dec_str(&tx_result.transaction_hash.to_string()).unwrap(),
-                )
-                .await;
-
-            if tx_status_info.is_err() {
-                sleep(Duration::from_secs(TRANSACTION_CHECK_WAIT_TIME)).await;
-                continue;
-            }
-
-            let tx = tx_status_info.as_ref().unwrap();
-            if TransactionStatus::Rejected == tx.status {
-                return match &tx.transaction_failure_reason {
-                    Some(fr) => Some(fr.code.to_string()),
-                    None => None,
-                };
-            }
-            if TransactionStatus::AcceptedOnL2 == tx.status
-                || TransactionStatus::AcceptedOnL1 == tx.status
-            {
-                info!(
-                    "Transaction with hash {}, has status : {:#?}",
-                    hex::encode(tx_result.transaction_hash.to_bytes_be()),
-                    tx.status
-                );
-                return None;
-            }
-
-            sleep(Duration::from_secs(TRANSACTION_CHECK_WAIT_TIME)).await;
-            continue;
-        }
-
-        return None;
     }
 }
 
@@ -111,12 +62,12 @@ impl StarknetManager for OnChainStartknetManager {
     async fn mint_project_token(
         &self,
         project_id: &str,
-        token_id: &str,
+        tokens: &[String],
         starknet_account_addr: &str,
-    ) -> Result<MintTransactionResult, MintError> {
+    ) -> Result<String, MintError> {
         info!(
-            "Trying to mint token {} on project {}",
-            token_id, project_id
+            "Trying to mint tokens {:#?} on project {}",
+            tokens, project_id
         );
         let provider = self.provider.clone();
         let signer = LocalWallet::from(SigningKey::from_secret_scalar(
@@ -127,16 +78,20 @@ impl StarknetManager for OnChainStartknetManager {
         let to = FieldElement::from_hex_be(starknet_account_addr).unwrap();
 
         let account = SingleOwnerAccount::new(provider, signer, address, chain_id::TESTNET);
+        let mut calls = Vec::new();
+        for t in tokens {
+            calls.push(Call {
+                to: FieldElement::from_hex_be(project_id).unwrap(),
+                selector: selector!("mint"),
+                calldata: vec![
+                    to,
+                    FieldElement::from_dec_str(t).unwrap(),
+                    FieldElement::ZERO,
+                ],
+            })
+        }
 
-        let account_attached_call = account.execute(&[Call {
-            to: FieldElement::from_hex_be(project_id).unwrap(),
-            selector: selector!("mint"),
-            calldata: vec![
-                to,
-                FieldElement::from_dec_str(token_id).unwrap(),
-                FieldElement::ZERO,
-            ],
-        }]);
+        let account_attached_call = account.execute(&calls.as_slice());
 
         // This value is set only to allow transactions during spike time
         let account_attached_call = account_attached_call.fee_estimate_multiplier(10.0);
@@ -146,22 +101,20 @@ impl StarknetManager for OnChainStartknetManager {
         match res {
             Ok(tx) => {
                 info!(
-                    "Token id {} minting in progress -> #{}",
-                    token_id,
+                    "Token id {:#?} minting in progress -> #{}",
+                    tokens,
                     hex::encode(tx.transaction_hash.to_bytes_be())
                 );
 
-                let tx_status_info = self.check_transaction_status(&tx).await;
-
-                Ok((
-                    hex::encode(tx.transaction_hash.to_bytes_be()),
-                    tx_status_info,
+                Ok(format!(
+                    "0x{}",
+                    hex::encode(tx.transaction_hash.to_bytes_be())
                 ))
             }
             Err(e) => {
                 error!(
-                    "Error while minting token id {} -> {}",
-                    token_id,
+                    "Error while minting token id {:#?} -> {}",
+                    tokens,
                     e.to_string()
                 );
                 Err(MintError::Failure)

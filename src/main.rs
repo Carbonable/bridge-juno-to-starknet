@@ -55,22 +55,6 @@ impl<T> ApiResponse<T> {
     }
 }
 
-// // Boilerplate code to replace with real implementation
-// // @todo: implement real secp256k1 real signature verification
-// struct AlwaysTrueSignatureVerifier {}
-//
-// impl SignedHashValidator for AlwaysTrueSignatureVerifier {
-//     fn verify(
-//         &self,
-//         signed_hash: &bridge_juno_to_starknet_backend::domain::bridge::SignedHash,
-//         starknet_account_addrr: &str,
-//         keplr_wallet_pubkey: &str,
-//     ) -> Result<String, bridge_juno_to_starknet_backend::domain::bridge::SignedHashValidatorError>
-//     {
-//         Ok(signed_hash.signature.to_string())
-//     }
-// }
-
 struct KeplrSignatureVeirfier {}
 impl SignedHashValidator for KeplrSignatureVeirfier {
     fn verify(
@@ -95,8 +79,6 @@ impl SignedHashValidator for KeplrSignatureVeirfier {
             starknet_account_addrr.as_bytes(),
             &signature,
         );
-
-        println!("{}", is_signature_ok);
 
         if !is_signature_ok {
             return Err(SignedHashValidatorError::FailedToVerifyHash);

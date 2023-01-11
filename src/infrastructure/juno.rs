@@ -74,7 +74,7 @@ impl TransactionRepository for JunoLcd {
     {
         // Hard limitting limit and offset as this is not relevant here to use it as a param.
         let endpoint = format!(
-            "/cosmos/tx/v1beta1/txs?events=execute._contract_address=%27{}%27&pagination.limit=60&pagination.offset=0&pagination.count_total=true",
+            "/cosmos/tx/v1beta1/txs?events=execute._contract_address=%27{}%27&pagination.limit=10&pagination.offset=0&pagination.count_total=true&order_by=ORDER_BY_DESC",
             project_id
         );
         let response = match self.get(endpoint).await {
@@ -109,10 +109,6 @@ impl TransactionRepository for JunoLcd {
                 }
             }
         }
-
-        // Transaction are returned with the OLDEST in first position, so we need to reverse them
-        // right away
-        domain_tx.reverse();
 
         Ok(domain_tx)
     }

@@ -18,6 +18,7 @@ pub struct OnChainStartknetManager {
     provider: Arc<SequencerGatewayProvider>,
     account_address: String,
     account_private_key: String,
+    chain_id: FieldElement,
 }
 
 impl OnChainStartknetManager {
@@ -25,11 +26,13 @@ impl OnChainStartknetManager {
         provider: Arc<SequencerGatewayProvider>,
         account_addr: &str,
         account_pk: &str,
+        chain_id: FieldElement,
     ) -> Self {
         Self {
             provider,
             account_address: account_addr.to_string(),
             account_private_key: account_pk.to_string(),
+            chain_id,
         }
     }
 }
@@ -77,7 +80,7 @@ impl StarknetManager for OnChainStartknetManager {
         let address = FieldElement::from_hex_be(self.account_address.as_str()).unwrap();
         let to = FieldElement::from_hex_be(starknet_account_addr).unwrap();
 
-        let account = SingleOwnerAccount::new(provider, signer, address, chain_id::TESTNET);
+        let account = SingleOwnerAccount::new(provider, signer, address, self.chain_id);
         let mut calls = Vec::new();
         for t in tokens {
             calls.push(Call {

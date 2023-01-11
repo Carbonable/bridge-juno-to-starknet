@@ -3,7 +3,7 @@ use log4rs::{
     append::console::ConsoleAppender,
     config::{Appender, Root},
 };
-use starknet::providers::SequencerGatewayProvider;
+use starknet::{core::types::FieldElement, providers::SequencerGatewayProvider};
 use std::sync::Arc;
 
 use actix_cors::Cors;
@@ -95,7 +95,7 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
         &req.keplr_wallet_pubkey, &req.tokens_id
     );
 
-    let provider = Arc::new(SequencerGatewayProvider::starknet_alpha_goerli());
+    let provider = &data.clone().starknet_provider;
 
     let transaction_repository = Arc::new(JunoLcd::new(&data.clone().juno_lcd));
     let hash_validator = Arc::new(KeplrSignatureVeirfier {});
@@ -103,6 +103,7 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
         provider.clone(),
         &data.clone().starknet_admin_address,
         &data.clone().starknet_private_key,
+        data.chain_id,
     ));
 
     let response = match handle_bridge_request(
@@ -308,6 +309,7 @@ struct Config {
     juno_admin_address: String,
     starknet_admin_address: String,
     starknet_private_key: String,
+    chain_id: FieldElement,
 }
 
 fn configure_logger() {
@@ -335,6 +337,12 @@ async fn main() -> std::io::Result<()> {
         "devnet-1" => Arc::new(SequencerGatewayProvider::starknet_nile_localhost()),
         _ => panic!("Starknet provider is not allowed"),
     };
+    let chain_id = match args.starknet_network_id.as_str() {
+        "mainnet" => starknet::core::chain_id::MAINNET,
+        "testnet-1" => starknet::core::chain_id::TESTNET,
+        "devnet-1" => starknet::core::chain_id::TESTNET2,
+        _ => panic!("Starknet chain_id is not allowed"),
+    };
 
     let data_repository = Arc::new(PostgresDataRepository::new(connection));
 
@@ -354,6 +362,7 @@ async fn main() -> std::io::Result<()> {
                 starknet_admin_address: String::from(&args.starknet_admin_address),
                 starknet_private_key: String::from(&args.starknet_admin_private_key),
                 starknet_provider: provider.clone(),
+                chain_id,
             }))
             .wrap(cors)
             .service(health)

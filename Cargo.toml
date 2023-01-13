@@ -25,6 +25,7 @@ log4rs = "1.2.0"
 hex = "0.4.3"
 verify-keplr-sign = "0.1.0"
 deadpool-postgres = "0.10.3"
+postgres-types = { version =  "0.2.4", features = ["derive"] }
 
 [dev-dependencies]
 cucumber = "0.18"

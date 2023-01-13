@@ -3,14 +3,14 @@ use std::sync::Arc;
 use bridge_juno_to_starknet_backend::{
     domain::{
         bridge::{
-            handle_bridge_request, BridgeError, BridgeRequest, BridgeResponse, SignedHash,
-            SignedHashValidator, StarknetManager, Transaction, TransactionRepository,
+            handle_bridge_request, BridgeError, BridgeRequest, BridgeResponse, QueueManager,
+            SignedHash, SignedHashValidator, StarknetManager, Transaction, TransactionRepository,
         },
         save_customer_data::DataRepository,
     },
     infrastructure::in_memory::{
-        InMemoryDataRepository, InMemoryStarknetTransactionManager, InMemoryTransactionRepository,
-        TestSignedHashValidator,
+        InMemoryDataRepository, InMemoryQueueManager, InMemoryStarknetTransactionManager,
+        InMemoryTransactionRepository, TestSignedHashValidator,
     },
 };
 use cucumber::{gherkin::Step, given, then, when, World};
@@ -26,6 +26,7 @@ struct BridgeWorld {
     transactions_repository: Option<Arc<dyn TransactionRepository>>,
     starknet_manager: Option<Arc<dyn StarknetManager>>,
     data_repository: Option<Arc<dyn DataRepository>>,
+    queue_manager: Option<Arc<dyn QueueManager>>,
 }
 impl BridgeWorld {
     fn with_signed_hash_validator(&mut self, validator: Arc<dyn SignedHashValidator>) {
@@ -40,6 +41,10 @@ impl BridgeWorld {
     fn with_data_repository(&mut self, data_repository: Arc<dyn DataRepository>) {
         self.data_repository = Some(data_repository);
     }
+
+    fn with_queue_manager(&mut self, queue_manager: Arc<dyn QueueManager>) {
+        self.queue_manager = Some(queue_manager);
+    }
 }
 
 impl Default for BridgeWorld {
@@ -51,6 +56,7 @@ impl Default for BridgeWorld {
             transactions_repository: None,
             starknet_manager: None,
             data_repository: None,
+            queue_manager: None,
         }
     }
 }
@@ -104,6 +110,7 @@ async fn when_i_execute_the_request(case: &mut BridgeWorld) {
                 case.transactions_repository.as_ref().unwrap().clone(),
                 case.starknet_manager.as_ref().unwrap().clone(),
                 case.data_repository.as_ref().unwrap().clone(),
+                case.queue_manager.as_ref().unwrap().clone(),
             )
             .await,
         )
@@ -161,24 +168,19 @@ fn then_current_owner_is_not_admin(case: &mut BridgeWorld) {
     };
 }
 
-#[then("nfts token should be minted on starknet and response sould be ok")]
+#[then("nfts migration request should have been enqueued and response should be ok")]
 async fn then_nfts_should_be_minted_on_starknet(case: &mut BridgeWorld) {
     let starknet_project_id = &case.request.as_ref().unwrap().starknet_project_addr;
     let tokens_id = &case.request.as_ref().unwrap().tokens_id;
-    let starknet_manager = case.starknet_manager.as_ref().unwrap().clone();
+    let queue_manager = &case.queue_manager.as_ref().unwrap().clone();
+
     if let Some(response) = &case.response {
         let _r = match response {
             Err(err) => panic!("{:#?}", err),
             Ok(r) => r,
         };
-        for token in tokens_id.as_ref().unwrap() {
-            if !starknet_manager
-                .project_has_token(starknet_project_id, token)
-                .await
-            {
-                panic!("Token {:#?} has not been minted on starknet", token)
-            }
-        }
+
+        assert_eq!(2, queue_manager.get_batch().await.unwrap().len())
     }
 }
 
@@ -186,10 +188,13 @@ fn main() {
     let validator = Arc::new(TestSignedHashValidator {});
     let starknet_manager = Arc::new(InMemoryStarknetTransactionManager::new());
     let data_repository = Arc::new(InMemoryDataRepository::new());
+    let queue_manager = Arc::new(InMemoryQueueManager::new());
+
     let world = BridgeWorld::cucumber().before(move |_feature, _rule, _scenario, _world| {
         _world.with_signed_hash_validator(validator.clone());
         _world.with_starknet_manager(starknet_manager.clone());
         _world.with_data_repository(data_repository.clone());
+        _world.with_queue_manager(queue_manager.clone());
         Box::pin(ready(()))
     });
 

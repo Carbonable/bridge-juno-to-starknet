@@ -5,7 +5,7 @@ Feature: Bridge between Juno and Starknet for carbonABLE NFT's
         - Check customers keplr wallet was the last owner of tokens
         - Check customer balance is effectively 0
         - Check admin address on Juno is now owner of tokens for project id
-        - Mint tokens on starknet.
+        - Enqueue the requested tokens 
 
     Scenario: Signed hash is incorrect
         Given the following transaction list
@@ -116,12 +116,12 @@ Feature: Bridge between Juno and Starknet for carbonABLE NFT's
                     }
                 },
                 {
-                    "sender": "carbonABLE",
+                    "sender": "k3plr-pk1",
                     "contract": "projectId",
                     "msg": {
                         "transfer_nft": {
-                            "recipient": "k3plr-pk1",
-                            "token_id": "255"
+                            "recipient": "juno-admin-account",
+                            "token_id": "254"
                         }
                     }
                 }
@@ -129,6 +129,6 @@ Feature: Bridge between Juno and Starknet for carbonABLE NFT's
             """
         Given a request with values:
             | signed_hash | starknet_account_addr | keplr_customer_pubkey | project_id | tokens_ids |
-            | aValidSignedHash | st4rkn3t-1 | k3plr-pk1 | projectId | [255] |
+            | aValidSignedHash | st4rkn3t-1 | k3plr-pk1 | projectId | [254, 255] |
         When I execute the request
-        Then nfts token should be minted on starknet and response sould be ok
+        Then nfts migration request should have been enqueued and response should be ok

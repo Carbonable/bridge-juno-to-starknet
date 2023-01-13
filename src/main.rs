@@ -11,7 +11,7 @@ use actix_web::{get, http, post, web, App, HttpServer, Responder};
 use bridge_juno_to_starknet_backend::{
     domain::{
         bridge::{
-            handle_bridge_request, BridgeError, BridgeRequest, SignedHashValidator,
+            handle_bridge_request, BridgeError, BridgeRequest, QueueManager, SignedHashValidator,
             SignedHashValidatorError,
         },
         save_customer_data::{
@@ -21,7 +21,7 @@ use bridge_juno_to_starknet_backend::{
     },
     infrastructure::{
         juno::JunoLcd,
-        postgresql::{get_connection, PostgresDataRepository},
+        postgresql::{get_connection, PostgresDataRepository, PostgresQueueManager},
         starknet::OnChainStartknetManager,
     },
 };
@@ -114,6 +114,7 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
         transaction_repository.clone(),
         starknet_manager.clone(),
         data.data_repository.clone(),
+        data.queue_manager.clone(),
     )
     .await
     {
@@ -174,6 +175,14 @@ async fn bridge(req: web::Json<BridgeRequest>, data: web::Data<Config>) -> impl 
                     web::Json(ApiResponse::bad_request("Error while minting token")),
                     http::StatusCode::BAD_REQUEST,
                 );
+            }
+            BridgeError::EnqueueingIssue => {
+                return (
+                    web::Json(ApiResponse::bad_request(
+                        "Error while enqueing your token for minting",
+                    )),
+                    http::StatusCode::INTERNAL_SERVER_ERROR,
+                )
             }
         },
     };
@@ -276,6 +285,25 @@ async fn save_customer_tokens(
     )
 }
 
+#[get("/customer/data/{keplr_wallet_pubkey}/{project_id}")]
+async fn get_customer_migration_state(
+    path: web::Path<(String, String)>,
+    data: web::Data<Config>,
+) -> impl Responder {
+    let (keplr_wallet_pubkey, project_id) = path.into_inner();
+    let queue_manager = data.clone().queue_manager.clone();
+    let res = queue_manager
+        .get_customer_migration_state(&keplr_wallet_pubkey, &project_id)
+        .await;
+
+    let mut status_code = http::StatusCode::OK;
+    if res.len() == 0 {
+        status_code = http::StatusCode::NOT_FOUND;
+    }
+
+    (web::Json(res), status_code)
+}
+
 #[derive(Parser, Debug)]
 struct Args {
     /// Blockchain REST endpoint
@@ -299,12 +327,16 @@ struct Args {
     /// Starknet network id
     #[arg(long, env = "FRONTEND_URI")]
     frontend_uri: String,
+    /// Queue batch size
+    #[arg(long, env = "BATCH_SIZE")]
+    batch_size: u8,
 }
 
 struct Config {
     juno_lcd: String,
     database_url: String,
     data_repository: Arc<dyn DataRepository>,
+    queue_manager: Arc<dyn QueueManager>,
     starknet_provider: Arc<SequencerGatewayProvider>,
     juno_admin_address: String,
     starknet_admin_address: String,
@@ -344,7 +376,11 @@ async fn main() -> std::io::Result<()> {
         _ => panic!("Starknet chain_id is not allowed"),
     };
 
-    let data_repository = Arc::new(PostgresDataRepository::new(connection));
+    let data_repository = Arc::new(PostgresDataRepository::new(connection.clone()));
+    let queue_manager = Arc::new(PostgresQueueManager::new(
+        connection.clone(),
+        args.batch_size,
+    ));
 
     info!("Ready to handle requests.");
 
@@ -358,6 +394,7 @@ async fn main() -> std::io::Result<()> {
                 juno_lcd: String::from(&args.juno_lcd),
                 database_url: String::from(&args.database_url),
                 data_repository: data_repository.clone(),
+                queue_manager: queue_manager.clone(),
                 juno_admin_address: String::from(&args.juno_admin_address),
                 starknet_admin_address: String::from(&args.starknet_admin_address),
                 starknet_private_key: String::from(&args.starknet_admin_private_key),
@@ -368,6 +405,7 @@ async fn main() -> std::io::Result<()> {
             .service(health)
             .service(bridge)
             .service(save_customer_tokens)
+            .service(get_customer_migration_state)
     })
     .bind(("0.0.0.0", 8080))?
     .run()

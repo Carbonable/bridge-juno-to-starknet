@@ -83,6 +83,7 @@ pub enum BridgeError {
     TokenAlreadyMinted(String),
     ErrorWhileMintingToken,
     JunoBlockChainServerError(u16),
+    EnqueueingIssue,
 }
 
 pub enum SignedHashValidatorError {
@@ -126,6 +127,67 @@ impl Debug for dyn TransactionRepository {
     }
 }
 
+#[derive(Debug)]
+pub enum QueueError {
+    FailedToGetBatch,
+    FailedToEnqueue,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum QueueStatus {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "processing")]
+    Processing,
+    #[serde(rename = "success")]
+    Success,
+    #[serde(rename = "error")]
+    Error,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct QueueItem {
+    pub keplr_wallet_pubkey: String,
+    pub project_id: String,
+    pub token_id: String,
+    pub status: QueueStatus,
+    pub transaction_hash: Option<String>,
+}
+
+impl QueueItem {
+    pub fn new(pubkey: &str, project_id: &str, token: String) -> Self {
+        Self {
+            keplr_wallet_pubkey: pubkey.into(),
+            project_id: project_id.into(),
+            token_id: token,
+            status: QueueStatus::Pending,
+            transaction_hash: None,
+        }
+    }
+}
+
+#[async_trait]
+pub trait QueueManager {
+    async fn enqueue(
+        &self,
+        keplr_wallet_pubkey: &str,
+        project_id: &str,
+        token_ids: Vec<String>,
+    ) -> Result<Vec<QueueItem>, QueueError>;
+    async fn get_batch(&self) -> Result<Vec<QueueItem>, QueueError>;
+    async fn get_customer_migration_state(
+        &self,
+        keplr_wallet_pubkey: &str,
+        project_id: &str,
+    ) -> Vec<QueueItem>;
+}
+
+impl Debug for dyn QueueManager {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "QueueManager{{}}")
+    }
+}
+
 pub enum MintError {
     Failure,
 }
@@ -158,7 +220,7 @@ pub struct BridgeResponse {
     pub checks: MintPreChecks,
     pub result: MintResult,
 }
-pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
+pub async fn handle_bridge_request<'a, 'b, 'c, 'd, 'e>(
     req: &BridgeRequest,
     keplr_admin_wallet: &str,
     starknet_admin_address: &str,
@@ -166,6 +228,7 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
     transaction_repository: Arc<dyn TransactionRepository + 'b>,
     starknet_manager: Arc<dyn StarknetManager + 'c>,
     data_repository: Arc<dyn DataRepository + 'd>,
+    queue_manager: Arc<dyn QueueManager + 'e>,
 ) -> Result<BridgeResponse, BridgeError> {
     match hash_validator.verify(
         &req.signed_hash,
@@ -316,33 +379,46 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd>(
                 token_to_mint.push(token.to_string());
             }
         }
-
-        if 0 == token_to_mint.len() {
-            return Ok(BridgeResponse {
-                checks: checked_tokens,
-                result: (vec![], "".to_string()),
-            });
-        }
-
-        // Mint token on starknet
-        let mint = starknet_manager
-            .mint_project_token(
+        let _queue_items = match queue_manager
+            .enqueue(
+                &req.keplr_wallet_pubkey,
                 &req.starknet_project_addr,
-                token_to_mint.as_slice(),
-                &req.starknet_account_addr,
+                token_to_mint.clone(),
             )
-            .await;
-
-        let transaction_hash = match mint {
-            Ok(m) => m,
-            Err(_) => return Err(BridgeError::ErrorWhileMintingToken),
+            .await
+        {
+            Ok(qi) => qi,
+            Err(e) => match e {
+                _ => return Err(BridgeError::EnqueueingIssue),
+            },
         };
+        //
+        // if 0 == token_to_mint.len() {
+        //     return Ok(BridgeResponse {
+        //         checks: checked_tokens,
+        //         result: (vec![], "".to_string()),
+        //     });
+        // }
+        //
+        // // Mint token on starknet
+        // let mint = starknet_manager
+        //     .mint_project_token(
+        //         &req.starknet_project_addr,
+        //         token_to_mint.as_slice(),
+        //         &req.starknet_account_addr,
+        //     )
+        //     .await;
+        //
+        // let transaction_hash = match mint {
+        //     Ok(m) => m,
+        //     Err(_) => return Err(BridgeError::ErrorWhileMintingToken),
+        // };
 
         return Ok(BridgeResponse {
             checks: checked_tokens,
             result: (
                 token_to_mint.iter().map(|t| t.to_string()).collect(),
-                transaction_hash,
+                "Your token(s) migration have been queued in. You can stay on this page to check the queueing status.".to_string(),
             ),
         });
     }

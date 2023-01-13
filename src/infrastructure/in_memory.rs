@@ -3,8 +3,9 @@ use std::{collections::HashMap, sync::Mutex};
 
 use crate::domain::{
     bridge::{
-        MintError, MsgTypes, SignedHash, SignedHashValidator, SignedHashValidatorError,
-        StarknetManager, Transaction, TransactionFetchError, TransactionRepository,
+        MintError, MsgTypes, QueueError, QueueItem, QueueManager, SignedHash, SignedHashValidator,
+        SignedHashValidatorError, StarknetManager, Transaction, TransactionFetchError,
+        TransactionRepository,
     },
     save_customer_data::{CustomerKeys, DataRepository, SaveCustomerDataError},
 };
@@ -193,5 +194,86 @@ impl DataRepository for InMemoryDataRepository {
             project_id: project_id.into(),
             token_ids: tokens.to_vec(),
         })
+    }
+}
+
+pub struct InMemoryQueueManager {
+    queue: Mutex<HashMap<String, QueueItem>>,
+}
+
+impl InMemoryQueueManager {
+    pub fn new() -> Self {
+        Self {
+            queue: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn get_queue_identifier(pubkey: &str, project_id: &str, token: &str) -> String {
+        format!("{pubkey}//{project_id}//{token}")
+    }
+}
+
+#[async_trait]
+impl QueueManager for InMemoryQueueManager {
+    async fn enqueue(
+        &self,
+        keplr_wallet_pubkey: &str,
+        project_id: &str,
+        token_ids: Vec<String>,
+    ) -> Result<Vec<QueueItem>, QueueError> {
+        let mut lock = match self.queue.lock() {
+            Ok(l) => l,
+            Err(_) => panic!("Failed to acquire lock on queue"),
+        };
+
+        let mut inserted_queue_items = Vec::new();
+        for token in token_ids {
+            let qi = QueueItem::new(keplr_wallet_pubkey, project_id, token.to_string());
+            lock.insert(
+                Self::get_queue_identifier(keplr_wallet_pubkey, project_id, token.as_str()),
+                qi.clone(),
+            );
+            inserted_queue_items.push(qi.clone());
+        }
+
+        Ok(inserted_queue_items)
+    }
+
+    async fn get_batch(&self) -> Result<Vec<QueueItem>, QueueError> {
+        let lock = match self.queue.lock() {
+            Ok(l) => l,
+            Err(_) => panic!("Failed to get lock on batch"),
+        };
+
+        let mut queue_items = Vec::new();
+        for (_keplr_pubkey, qi) in lock.iter() {
+            queue_items.push(qi.clone());
+        }
+
+        Ok(queue_items)
+    }
+    async fn get_customer_migration_state(
+        &self,
+        keplr_wallet_pubkey: &str,
+        project_id: &str,
+    ) -> Vec<QueueItem> {
+        let lock = match self.queue.lock() {
+            Ok(l) => l,
+            Err(_) => panic!("Failed to acquire lock on resource"),
+        };
+
+        let mut queue_items = Vec::new();
+        for (id, qi) in lock.iter() {
+            if id
+                .as_str()
+                .starts_with(format!("{keplr_wallet_pubkey}//{project_id}").as_str())
+            {
+                continue;
+            }
+
+            queue_items.push(qi.clone());
+        }
+
+        queue_items
     }
 }

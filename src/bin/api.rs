@@ -1,11 +1,3 @@
-use log::{info, LevelFilter};
-use log4rs::{
-    append::console::ConsoleAppender,
-    config::{Appender, Root},
-};
-use starknet::{core::types::FieldElement, providers::SequencerGatewayProvider};
-use std::sync::Arc;
-
 use actix_cors::Cors;
 use actix_web::{get, http, post, web, App, HttpServer, Responder};
 use bridge_juno_to_starknet_backend::{
@@ -20,13 +12,19 @@ use bridge_juno_to_starknet_backend::{
         },
     },
     infrastructure::{
+        app::{configure_application, Args, Config},
         juno::JunoLcd,
+        logger::configure_logger,
         postgresql::{get_connection, PostgresDataRepository, PostgresQueueManager},
         starknet::OnChainStartknetManager,
     },
 };
 use clap::Parser;
+use futures::executor::block_on;
+use log::info;
 use serde_derive::Serialize;
+use starknet::{core::types::FieldElement, providers::SequencerGatewayProvider};
+use std::sync::Arc;
 
 #[derive(Serialize)]
 struct ApiResponse<T> {
@@ -304,103 +302,23 @@ async fn get_customer_migration_state(
     (web::Json(res), status_code)
 }
 
-#[derive(Parser, Debug)]
-struct Args {
-    /// Blockchain REST endpoint
-    #[arg(long, env = "JUNO_LCD")]
-    juno_lcd: String,
-    /// Database url to connect to
-    #[arg(long, env = "DATABASE_URL")]
-    database_url: String,
-    /// Juno admin wallet address
-    #[arg(long, env = "JUNO_ADMIN_ADDRESS")]
-    juno_admin_address: String,
-    /// Starknet admin wallet address
-    #[arg(long, env = "STARKNET_ADMIN_ADDRESS")]
-    starknet_admin_address: String,
-    /// Starknet admin wallet private key
-    #[arg(long, env = "STARKNET_ADMIN_PRIVATE_KEY")]
-    starknet_admin_private_key: String,
-    /// Starknet network id
-    #[arg(long, env = "STARKNET_NETWORK_ID")]
-    starknet_network_id: String,
-    /// Starknet network id
-    #[arg(long, env = "FRONTEND_URI")]
-    frontend_uri: String,
-    /// Queue batch size
-    #[arg(long, env = "BATCH_SIZE")]
-    batch_size: u8,
-}
-
-struct Config {
-    juno_lcd: String,
-    database_url: String,
-    data_repository: Arc<dyn DataRepository>,
-    queue_manager: Arc<dyn QueueManager>,
-    starknet_provider: Arc<SequencerGatewayProvider>,
-    juno_admin_address: String,
-    starknet_admin_address: String,
-    starknet_private_key: String,
-    chain_id: FieldElement,
-}
-
-fn configure_logger() {
-    let stdout: ConsoleAppender = ConsoleAppender::builder().build();
-    let log_config = log4rs::config::Config::builder()
-        .appender(Appender::builder().build("stdout", Box::new(stdout)))
-        .build(Root::builder().appender("stdout").build(LevelFilter::Info))
-        .unwrap();
-    log4rs::init_config(log_config).unwrap();
-}
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     configure_logger();
     info!("Starting bridge application.");
+
     let args = Args::parse();
-    let connection = match get_connection(&args.database_url).await {
-        Ok(c) => Arc::new(c),
-        Err(e) => panic!("Failed to connect to database error : {}", e),
-    };
-
-    let provider = match args.starknet_network_id.as_str() {
-        "mainnet" => Arc::new(SequencerGatewayProvider::starknet_alpha_mainnet()),
-        "testnet-1" => Arc::new(SequencerGatewayProvider::starknet_alpha_goerli()),
-        "devnet-1" => Arc::new(SequencerGatewayProvider::starknet_nile_localhost()),
-        _ => panic!("Starknet provider is not allowed"),
-    };
-    let chain_id = match args.starknet_network_id.as_str() {
-        "mainnet" => starknet::core::chain_id::MAINNET,
-        "testnet-1" => starknet::core::chain_id::TESTNET,
-        "devnet-1" => starknet::core::chain_id::TESTNET2,
-        _ => panic!("Starknet chain_id is not allowed"),
-    };
-
-    let data_repository = Arc::new(PostgresDataRepository::new(connection.clone()));
-    let queue_manager = Arc::new(PostgresQueueManager::new(
-        connection.clone(),
-        args.batch_size,
-    ));
 
     info!("Ready to handle requests.");
 
     HttpServer::new(move || {
+        let config = block_on(configure_application(&args));
         let cors = Cors::default()
-            .allowed_origin(args.frontend_uri.as_str())
+            .allowed_origin(&args.frontend_uri.as_str())
             .allowed_methods(vec!["POST"])
             .allowed_headers(vec![http::header::CONTENT_TYPE]);
         App::new()
-            .app_data(web::Data::new(Config {
-                juno_lcd: String::from(&args.juno_lcd),
-                database_url: String::from(&args.database_url),
-                data_repository: data_repository.clone(),
-                queue_manager: queue_manager.clone(),
-                juno_admin_address: String::from(&args.juno_admin_address),
-                starknet_admin_address: String::from(&args.starknet_admin_address),
-                starknet_private_key: String::from(&args.starknet_admin_private_key),
-                starknet_provider: provider.clone(),
-                chain_id,
-            }))
+            .app_data(web::Data::new(config))
             .wrap(cors)
             .service(health)
             .service(bridge)

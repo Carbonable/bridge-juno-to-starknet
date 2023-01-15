@@ -254,8 +254,8 @@ impl QueueManager for InMemoryQueueManager {
     }
     async fn get_customer_migration_state(
         &self,
-        keplr_wallet_pubkey: &str,
         project_id: &str,
+        keplr_wallet_pubkey: &str,
     ) -> Vec<QueueItem> {
         let lock = match self.queue.lock() {
             Ok(l) => l,

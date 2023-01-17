@@ -12,7 +12,6 @@ use tokio::time::{sleep, Duration};
 
 use crate::domain::bridge::{MintError, QueueItem, QueueStatus, StarknetManager};
 
-const TRANSACTION_CHECK_MAX_RETRY: u8 = 30;
 const TRANSACTION_CHECK_WAIT_TIME: u64 = 5;
 
 struct TransactionRejected(Option<String>);
@@ -48,9 +47,7 @@ impl OnChainStartknetManager {
             hex::encode(tx_result.transaction_hash.to_bytes_be())
         );
         let provider = self.provider.clone();
-        let mut retry_count = 0;
-        while TRANSACTION_CHECK_MAX_RETRY >= retry_count {
-            retry_count += 1;
+        loop {
             let tx_status_info = &provider
                 .get_transaction_status(
                     FieldElement::from_dec_str(&tx_result.transaction_hash.to_string()).unwrap(),
@@ -81,10 +78,7 @@ impl OnChainStartknetManager {
             }
 
             sleep(Duration::from_secs(TRANSACTION_CHECK_WAIT_TIME)).await;
-            continue;
         }
-
-        return Ok(());
     }
 }
 

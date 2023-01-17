@@ -2,17 +2,20 @@ use async_trait::async_trait;
 use log::{error, info};
 use starknet::{
     accounts::{Account, AccountCall, Call, SingleOwnerAccount},
-    core::{
-        chain_id,
-        types::{BlockId, CallFunction, FieldElement},
-    },
+    core::types::{AddTransactionResult, BlockId, CallFunction, FieldElement, TransactionStatus},
     macros::selector,
     providers::{Provider, SequencerGatewayProvider},
     signers::{LocalWallet, SigningKey},
 };
 use std::sync::Arc;
+use tokio::time::{sleep, Duration};
 
-use crate::domain::bridge::{MintError, StarknetManager};
+use crate::domain::bridge::{MintError, QueueItem, QueueStatus, StarknetManager};
+
+const TRANSACTION_CHECK_MAX_RETRY: u8 = 30;
+const TRANSACTION_CHECK_WAIT_TIME: u64 = 5;
+
+struct TransactionRejected(Option<String>);
 
 pub struct OnChainStartknetManager {
     provider: Arc<SequencerGatewayProvider>,
@@ -34,6 +37,54 @@ impl OnChainStartknetManager {
             account_private_key: account_pk.to_string(),
             chain_id,
         }
+    }
+
+    async fn check_transaction_status(
+        &self,
+        tx_result: &AddTransactionResult,
+    ) -> Result<(), TransactionRejected> {
+        info!(
+            "Checking transaction status : {}",
+            hex::encode(tx_result.transaction_hash.to_bytes_be())
+        );
+        let provider = self.provider.clone();
+        let mut retry_count = 0;
+        while TRANSACTION_CHECK_MAX_RETRY >= retry_count {
+            retry_count += 1;
+            let tx_status_info = &provider
+                .get_transaction_status(
+                    FieldElement::from_dec_str(&tx_result.transaction_hash.to_string()).unwrap(),
+                )
+                .await;
+
+            if tx_status_info.is_err() {
+                sleep(Duration::from_secs(TRANSACTION_CHECK_WAIT_TIME)).await;
+                continue;
+            }
+
+            let tx = tx_status_info.as_ref().unwrap();
+            if TransactionStatus::Rejected == tx.status {
+                return match &tx.transaction_failure_reason {
+                    Some(fr) => Err(TransactionRejected(Some(fr.code.to_string()))),
+                    None => Err(TransactionRejected(None)),
+                };
+            }
+            if TransactionStatus::AcceptedOnL2 == tx.status
+                || TransactionStatus::AcceptedOnL1 == tx.status
+            {
+                info!(
+                    "Transaction with hash {}, has status : {:#?}",
+                    hex::encode(tx_result.transaction_hash.to_bytes_be()),
+                    tx.status
+                );
+                return Ok(());
+            }
+
+            sleep(Duration::from_secs(TRANSACTION_CHECK_WAIT_TIME)).await;
+            continue;
+        }
+
+        return Ok(());
     }
 }
 
@@ -120,6 +171,59 @@ impl StarknetManager for OnChainStartknetManager {
                     tokens,
                     e.to_string()
                 );
+                Err(MintError::Failure)
+            }
+        }
+    }
+    async fn batch_mint_tokens(
+        &self,
+        project_id: &str,
+        queue_items: Vec<QueueItem>,
+    ) -> Result<(String, QueueStatus), MintError> {
+        let provider = self.provider.clone();
+        let signer = LocalWallet::from(SigningKey::from_secret_scalar(
+            FieldElement::from_hex_be(self.account_private_key.as_str()).unwrap(),
+        ));
+
+        let address = FieldElement::from_hex_be(self.account_address.as_str()).unwrap();
+
+        let account = SingleOwnerAccount::new(provider, signer, address, self.chain_id);
+        let mut calls = Vec::new();
+        for qi in queue_items {
+            let to = FieldElement::from_hex_be(qi.starknet_wallet_pubkey.as_str()).unwrap();
+            calls.push(Call {
+                to: FieldElement::from_hex_be(project_id).unwrap(),
+                selector: selector!("mint"),
+                calldata: vec![
+                    to,
+                    FieldElement::from_dec_str(qi.token_id.as_str()).unwrap(),
+                    FieldElement::ZERO,
+                ],
+            })
+        }
+
+        let account_attached_call = account.execute(&calls.as_slice());
+
+        // This value is set only to allow transactions during spike time
+        let account_attached_call = account_attached_call.fee_estimate_multiplier(10.0);
+
+        let res = account_attached_call.send().await;
+
+        match res {
+            Ok(tx) => {
+                info!(
+                    "Batch transaction in progress -> #{}",
+                    hex::encode(tx.transaction_hash.to_bytes_be())
+                );
+
+                let tx_hash = format!("0x{}", hex::encode(tx.transaction_hash.to_bytes_be()));
+                return match self.check_transaction_status(&tx).await {
+                    Err(_e) => Ok((tx_hash, QueueStatus::Error)),
+                    Ok(_) => Ok((tx_hash, QueueStatus::Success)),
+                };
+            }
+            Err(e) => {
+                error!("Error while batching transaction -> {}", e.to_string());
                 Err(MintError::Failure)
             }
         }

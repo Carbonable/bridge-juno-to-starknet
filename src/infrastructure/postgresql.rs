@@ -1,14 +1,14 @@
 use crate::domain::{
-    bridge::{QueueError, QueueItem, QueueManager, QueueStatus},
+    bridge::{QueueError, QueueItem, QueueManager, QueueStatus, QueueUpdateError},
     save_customer_data::{CustomerKeys, DataRepository, SaveCustomerDataError},
 };
 use async_trait::async_trait;
-use cosmrs::proto::ics23::batch_entry;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use log::error;
-use postgres_types::FromSql;
+use postgres_types::{FromSql, ToSql};
 use std::sync::Arc;
-use tokio_postgres::{Config, Error, NoTls};
+use tokio_postgres::{Config, Error, NoTls, Row};
+use uuid::Uuid;
 
 pub async fn get_connection(database_uri: &str) -> core::result::Result<Pool, Error> {
     let config = database_uri.parse::<Config>()?;
@@ -90,7 +90,7 @@ impl DataRepository for PostgresDataRepository {
     }
 }
 
-#[derive(FromSql)]
+#[derive(FromSql, ToSql, Debug)]
 #[postgres(name = "migration_status_values")]
 pub enum PostgresQueueStatus {
     #[postgres(name = "pending")]
@@ -114,6 +114,17 @@ impl From<PostgresQueueStatus> for QueueStatus {
     }
 }
 
+impl Into<PostgresQueueStatus> for QueueStatus {
+    fn into(self) -> PostgresQueueStatus {
+        match self {
+            QueueStatus::Pending => PostgresQueueStatus::Pending,
+            QueueStatus::Processing => PostgresQueueStatus::Processing,
+            QueueStatus::Success => PostgresQueueStatus::Success,
+            QueueStatus::Error => PostgresQueueStatus::Error,
+        }
+    }
+}
+
 pub struct PostgresQueueManager {
     connection_pool: Arc<Pool>,
     batch_size: u8,
@@ -124,6 +135,7 @@ impl QueueManager for PostgresQueueManager {
     async fn enqueue(
         &self,
         keplr_wallet_pubkey: &str,
+        starknet_wallet_pubkey: &str,
         project_id: &str,
         token_ids: Vec<String>,
     ) -> Result<Vec<QueueItem>, QueueError> {
@@ -133,13 +145,21 @@ impl QueueManager for PostgresQueueManager {
         let tx_builder = client.build_transaction();
         let tx = tx_builder.start().await.unwrap();
         for token in &token_ids {
-            let _insert = tx.execute(
-                "INSERT INTO migration_queue (keplr_wallet_pubkey, project_id, token_id) VALUES ($1, $2, $3)",
-                &[&keplr_wallet_pubkey, &project_id, &token]
-                ).await;
+            let insert = match tx.execute(
+                "INSERT INTO migration_queue (keplr_wallet_pubkey, starknet_wallet_pubkey, project_id, token_id) VALUES ($1, $2, $3, $4)",
+                &[&keplr_wallet_pubkey, &starknet_wallet_pubkey, &project_id, &token]
+            ).await {
+                Ok(i) => i,
+                Err(e) => {
+                    error!("{:#?}", e);
+                    return Err(QueueError::FailedToEnqueue);
+                },
+            };
+            println!("{:#?}", insert);
 
             queue_items.push(QueueItem::new(
                 keplr_wallet_pubkey,
+                starknet_wallet_pubkey,
                 project_id,
                 token.to_string(),
             ));
@@ -155,7 +175,23 @@ impl QueueManager for PostgresQueueManager {
     }
 
     async fn get_batch(&self) -> Result<Vec<QueueItem>, QueueError> {
-        Err(QueueError::FailedToGetBatch)
+        let client = self.connection_pool.get().await.unwrap();
+        let rows = match client
+            .query(
+                "SELECT id, keplr_wallet_pubkey, starknet_wallet_pubkey, project_id, token_id, transaction_hash, migration_status FROM migration_queue WHERE transaction_hash IS NULL LIMIT $1;",
+                &[&(self.batch_size as i64)],
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                error!("{}", e);
+                return Err(QueueError::FailedToGetBatch)
+            },
+        };
+
+        let queue_items = self.hydrate_queue_items(rows);
+        Ok(queue_items)
     }
 
     async fn get_customer_migration_state(
@@ -166,7 +202,7 @@ impl QueueManager for PostgresQueueManager {
         let client = self.connection_pool.get().await.unwrap();
         let rows = match client
             .query(
-                "SELECT * FROM migration_queue WHERE keplr_wallet_pubkey = $1 AND project_id = $2;",
+                "SELECT id, keplr_wallet_pubkey, starknet_wallet_pubkey, project_id, token_id, transaction_hash, migration_status FROM migration_queue WHERE keplr_wallet_pubkey = $1 AND project_id = $2;",
                 &[&keplr_wallet_pubkey, &project_id],
             )
             .await
@@ -178,18 +214,36 @@ impl QueueManager for PostgresQueueManager {
             }
         };
 
-        let mut queue_items = Vec::new();
-        for row in rows {
-            let tx_hash: Option<String> = row.get(4);
-            queue_items.push(QueueItem {
-                keplr_wallet_pubkey: row.get::<usize, String>(1).into(),
-                project_id: row.get::<usize, String>(2).into(),
-                token_id: row.get::<usize, String>(3).into(),
-                transaction_hash: tx_hash,
-                status: QueueStatus::from(row.get::<usize, PostgresQueueStatus>(5)),
-            });
-        }
+        let queue_items = self.hydrate_queue_items(rows);
         queue_items
+    }
+
+    async fn update_queue_items_status(
+        &self,
+        ids: &Vec<String>,
+        transaction_hash: String,
+        status: QueueStatus,
+    ) -> Result<(), QueueUpdateError> {
+        let client = self.connection_pool.get().await.unwrap();
+
+        let uuids = ids
+            .iter()
+            .map(|id| Uuid::parse_str(id.as_str()).unwrap())
+            .collect::<Vec<Uuid>>();
+        match client.execute("UPDATE migration_queue SET migration_status = $1, transaction_hash = $2 WHERE id = ANY($3);", &[&<QueueStatus as Into<PostgresQueueStatus>>::into(status), &transaction_hash, &uuids]).await {
+            Ok(num_rows) =>  {
+                if usize::try_from(num_rows).unwrap() == ids.len() {
+                    return Ok(());
+                }
+
+
+                return Err(QueueUpdateError::StatusUpdateFail(ids.to_vec()));
+            },
+            Err(e) => {
+                error!("Failed to update queue items in database {:#?}", e);
+                return Err(QueueUpdateError::StatusUpdateFail(ids.to_vec()));
+            }
+        };
     }
 }
 
@@ -199,5 +253,22 @@ impl PostgresQueueManager {
             connection_pool,
             batch_size,
         }
+    }
+
+    fn hydrate_queue_items(&self, rows: Vec<Row>) -> Vec<QueueItem> {
+        let mut queue_items = Vec::new();
+        for row in rows {
+            let tx_hash: Option<String> = row.get("transaction_hash");
+            queue_items.push(QueueItem {
+                id: row.get("id"),
+                keplr_wallet_pubkey: row.get::<&str, String>("keplr_wallet_pubkey").into(),
+                starknet_wallet_pubkey: row.get::<&str, String>("starknet_wallet_pubkey").into(),
+                project_id: row.get::<&str, String>("project_id").into(),
+                token_id: row.get::<&str, String>("token_id").into(),
+                transaction_hash: tx_hash,
+                status: QueueStatus::from(row.get::<&str, PostgresQueueStatus>("migration_status")),
+            });
+        }
+        queue_items
     }
 }

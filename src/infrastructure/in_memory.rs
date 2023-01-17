@@ -3,9 +3,9 @@ use std::{collections::HashMap, sync::Mutex};
 
 use crate::domain::{
     bridge::{
-        MintError, MsgTypes, QueueError, QueueItem, QueueManager, SignedHash, SignedHashValidator,
-        SignedHashValidatorError, StarknetManager, Transaction, TransactionFetchError,
-        TransactionRepository,
+        MintError, MsgTypes, QueueError, QueueItem, QueueManager, QueueStatus, QueueUpdateError,
+        SignedHash, SignedHashValidator, SignedHashValidatorError, StarknetManager, Transaction,
+        TransactionFetchError, TransactionRepository,
     },
     save_customer_data::{CustomerKeys, DataRepository, SaveCustomerDataError},
 };
@@ -97,7 +97,7 @@ impl StarknetManager for InMemoryStarknetTransactionManager {
             _ => return Err(MintError::Failure),
         };
 
-        if !lock.contains_key(project_id) {
+        if lock.contains_key(project_id) {
             lock.insert(project_id.to_string(), HashMap::new());
         }
 
@@ -108,6 +108,17 @@ impl StarknetManager for InMemoryStarknetTransactionManager {
         }
 
         Ok("0xHExaD3c1m4lTr4ns4ct10nH4sH".to_string())
+    }
+
+    async fn batch_mint_tokens(
+        &self,
+        project_id: &str,
+        queue_items: Vec<QueueItem>,
+    ) -> Result<(String, QueueStatus), MintError> {
+        Ok((
+            "0xHExaD3c1m4lTr4ns4ct10nH4sH".to_string(),
+            QueueStatus::Success,
+        ))
     }
 }
 
@@ -198,7 +209,7 @@ impl DataRepository for InMemoryDataRepository {
 }
 
 pub struct InMemoryQueueManager {
-    queue: Mutex<HashMap<String, QueueItem>>,
+    pub queue: Mutex<HashMap<String, QueueItem>>,
 }
 
 impl InMemoryQueueManager {
@@ -218,6 +229,7 @@ impl QueueManager for InMemoryQueueManager {
     async fn enqueue(
         &self,
         keplr_wallet_pubkey: &str,
+        starknet_wallet_pubkey: &str,
         project_id: &str,
         token_ids: Vec<String>,
     ) -> Result<Vec<QueueItem>, QueueError> {
@@ -228,7 +240,12 @@ impl QueueManager for InMemoryQueueManager {
 
         let mut inserted_queue_items = Vec::new();
         for token in token_ids {
-            let qi = QueueItem::new(keplr_wallet_pubkey, project_id, token.to_string());
+            let qi = QueueItem::new(
+                keplr_wallet_pubkey,
+                starknet_wallet_pubkey,
+                project_id,
+                token.to_string(),
+            );
             lock.insert(
                 Self::get_queue_identifier(keplr_wallet_pubkey, project_id, token.as_str()),
                 qi.clone(),
@@ -275,5 +292,14 @@ impl QueueManager for InMemoryQueueManager {
         }
 
         queue_items
+    }
+
+    async fn update_queue_items_status(
+        &self,
+        ids: &Vec<String>,
+        transaction_hash: String,
+        status: QueueStatus,
+    ) -> Result<(), QueueUpdateError> {
+        Ok(())
     }
 }

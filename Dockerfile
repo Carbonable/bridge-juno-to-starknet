@@ -11,7 +11,9 @@ RUN --mount=type=cache,target=/srv/www/target \
 		set -eux; \
 		rustup install stable; \
 	 	cargo build --release; \
-		objcopy --compress-debug-sections target/release/bridge-juno-to-starknet-backend ./bridge-juno-to-starknet-backend
+		objcopy --compress-debug-sections target/release/api ./api; \
+		objcopy --compress-debug-sections target/release/worker ./worker
+
 
 
 FROM debian:bullseye-slim as production-runtime
@@ -27,5 +29,7 @@ RUN set -eux; \
 
 WORKDIR /srv/www
 
-COPY --from=builder /srv/www/bridge-juno-to-starknet-backend ./bridge-juno-to-starknet-backend
-CMD ["./bridge-juno-to-starknet-backend"]
+COPY --from=builder /srv/www/api ./api
+COPY --from=builder /srv/www/worker ./worker
+
+CMD ["tail", "-f", "/dev/null"]

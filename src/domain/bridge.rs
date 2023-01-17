@@ -5,6 +5,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 
 use super::save_customer_data::DataRepository;
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PubKey {
@@ -147,7 +148,9 @@ pub enum QueueStatus {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct QueueItem {
+    pub id: Option<Uuid>,
     pub keplr_wallet_pubkey: String,
+    pub starknet_wallet_pubkey: String,
     pub project_id: String,
     pub token_id: String,
     pub status: QueueStatus,
@@ -155,9 +158,11 @@ pub struct QueueItem {
 }
 
 impl QueueItem {
-    pub fn new(pubkey: &str, project_id: &str, token: String) -> Self {
+    pub fn new(pubkey: &str, starknet_pubkey: &str, project_id: &str, token: String) -> Self {
         Self {
+            id: None,
             keplr_wallet_pubkey: pubkey.into(),
+            starknet_wallet_pubkey: starknet_pubkey.into(),
             project_id: project_id.into(),
             token_id: token,
             status: QueueStatus::Pending,
@@ -166,11 +171,17 @@ impl QueueItem {
     }
 }
 
+#[derive(Debug)]
+pub enum QueueUpdateError {
+    StatusUpdateFail(Vec<String>),
+}
+
 #[async_trait]
 pub trait QueueManager {
     async fn enqueue(
         &self,
         keplr_wallet_pubkey: &str,
+        starknet_wallet_pubkey: &str,
         project_id: &str,
         token_ids: Vec<String>,
     ) -> Result<Vec<QueueItem>, QueueError>;
@@ -180,6 +191,12 @@ pub trait QueueManager {
         keplr_wallet_pubkey: &str,
         project_id: &str,
     ) -> Vec<QueueItem>;
+    async fn update_queue_items_status(
+        &self,
+        ids: &Vec<String>,
+        transaction_hash: String,
+        status: QueueStatus,
+    ) -> Result<(), QueueUpdateError>;
 }
 
 impl Debug for dyn QueueManager {
@@ -204,6 +221,11 @@ pub trait StarknetManager {
         tokens: &[String],
         starknet_account_addr: &str,
     ) -> Result<String, MintError>;
+    async fn batch_mint_tokens(
+        &self,
+        project_id: &str,
+        queue_items: Vec<QueueItem>,
+    ) -> Result<(String, QueueStatus), MintError>;
 }
 impl Debug for dyn StarknetManager {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
@@ -382,6 +404,7 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd, 'e>(
         let _queue_items = match queue_manager
             .enqueue(
                 &req.keplr_wallet_pubkey,
+                &req.starknet_account_addr,
                 &req.starknet_project_addr,
                 token_to_mint.clone(),
             )
@@ -392,27 +415,6 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd, 'e>(
                 _ => return Err(BridgeError::EnqueueingIssue),
             },
         };
-        //
-        // if 0 == token_to_mint.len() {
-        //     return Ok(BridgeResponse {
-        //         checks: checked_tokens,
-        //         result: (vec![], "".to_string()),
-        //     });
-        // }
-        //
-        // // Mint token on starknet
-        // let mint = starknet_manager
-        //     .mint_project_token(
-        //         &req.starknet_project_addr,
-        //         token_to_mint.as_slice(),
-        //         &req.starknet_account_addr,
-        //     )
-        //     .await;
-        //
-        // let transaction_hash = match mint {
-        //     Ok(m) => m,
-        //     Err(_) => return Err(BridgeError::ErrorWhileMintingToken),
-        // };
 
         return Ok(BridgeResponse {
             checks: checked_tokens,

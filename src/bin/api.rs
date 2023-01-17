@@ -3,19 +3,17 @@ use actix_web::{get, http, post, web, App, HttpServer, Responder};
 use bridge_juno_to_starknet_backend::{
     domain::{
         bridge::{
-            handle_bridge_request, BridgeError, BridgeRequest, QueueManager, SignedHashValidator,
+            handle_bridge_request, BridgeError, BridgeRequest, SignedHashValidator,
             SignedHashValidatorError,
         },
         save_customer_data::{
-            handle_save_customer_data, DataRepository, SaveCustomerDataError,
-            SaveCustomerDataRequest,
+            handle_save_customer_data, SaveCustomerDataError, SaveCustomerDataRequest,
         },
     },
     infrastructure::{
         app::{configure_application, Args, Config},
         juno::JunoLcd,
         logger::configure_logger,
-        postgresql::{get_connection, PostgresDataRepository, PostgresQueueManager},
         starknet::OnChainStartknetManager,
     },
 };
@@ -23,7 +21,6 @@ use clap::Parser;
 use futures::executor::block_on;
 use log::info;
 use serde_derive::Serialize;
-use starknet::{core::types::FieldElement, providers::SequencerGatewayProvider};
 use std::sync::Arc;
 
 #[derive(Serialize)]

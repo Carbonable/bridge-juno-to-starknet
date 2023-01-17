@@ -11,15 +11,13 @@ serde_derive = "1.0.151"
 serde_json = "1.0.91"
 actix-web = "4"
 reqwest = { version =  "0.11.13", features = ["json", "blocking"] }
-thiserror = "1.0.38"
 clap = { version = "4.0.30", features = ["derive", "env"] }
 async-trait = "0.1.60"
 postgres = "0.19.4"
-tokio-postgres = "0.7.7"
+tokio-postgres = { version = "0.7.7", features = ["with-uuid-1"]} 
 tokio = { version = "1.23.0", features = ["full"] }
-starknet = { git = "https://github.com/xJonathanLEI/starknet-rs" }
+starknet = { git = "https://github.com/xJonathanLEI/starknet-rs", rev = "d35867a828adc7de5059485413f2b7208325a384" }
 log = "0.4.17"
-cosmrs = "0.11.0"
 actix-cors = "0.6.4"
 log4rs = "1.2.0"
 hex = "0.4.3"
@@ -27,6 +25,7 @@ verify-keplr-sign = "0.1.0"
 deadpool-postgres = "0.10.3"
 postgres-types = { version =  "0.2.4", features = ["derive"] }
 futures = "0.3"
+uuid = {version = "1.2.2", features = ["v4", "serde"]}
 
 [dev-dependencies]
 cucumber = "0.18"

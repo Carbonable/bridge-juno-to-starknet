@@ -3,7 +3,10 @@
 app = "prod-bridge-backend"
 kill_signal = "SIGINT"
 kill_timeout = 5
-processes = []
+
+[processes]
+api = "/srv/www/api"
+worker = "/srv/www/worker"
 
 [env]
 
@@ -12,8 +15,8 @@ processes = []
   auto_rollback = true
 
 [[services]]
+  processes = ["api"]
   internal_port = 8080
-  processes = ["app"]
   protocol = "tcp"
   script_checks = []
 

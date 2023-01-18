@@ -19,7 +19,7 @@ use bridge_juno_to_starknet_backend::{
 };
 use clap::Parser;
 use futures::executor::block_on;
-use log::info;
+use log::{error, info};
 use serde_derive::Serialize;
 use std::sync::Arc;
 
@@ -245,6 +245,7 @@ async fn save_customer_tokens(
                 )
             }
             SaveCustomerDataError::NotFound => {
+                error!("Customer not found");
                 return (
                     web::Json(ApiResponse {
                         error: Some("Not Found".into()),
@@ -253,9 +254,10 @@ async fn save_customer_tokens(
                         body: None,
                     }),
                     http::StatusCode::NOT_FOUND,
-                )
+                );
             }
             SaveCustomerDataError::FailedToPersistToDatabase => {
+                error!("Failed to persist to database");
                 return (
                     web::Json(ApiResponse {
                         error: Some("Internal Server Error".into()),
@@ -264,7 +266,7 @@ async fn save_customer_tokens(
                         body: None,
                     }),
                     http::StatusCode::INTERNAL_SERVER_ERROR,
-                )
+                );
             }
         },
     };

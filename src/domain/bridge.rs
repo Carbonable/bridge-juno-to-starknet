@@ -270,7 +270,7 @@ pub async fn handle_bridge_request<'a, 'b, 'c, 'd, 'e>(
         Err(_) => None,
     };
 
-    if tokens.is_none() && req.tokens_id.is_none() {
+    if tokens.is_none() && req.tokens_id.as_ref().unwrap().len() == 0 {
         error!(
             "No tokens ids found for wallet {} and project {}",
             &req.keplr_wallet_pubkey, &req.project_id

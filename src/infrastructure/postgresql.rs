@@ -4,7 +4,7 @@ use crate::domain::{
 };
 use async_trait::async_trait;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
-use log::error;
+use log::{error, info};
 use postgres_types::{FromSql, ToSql};
 use std::sync::Arc;
 use tokio_postgres::{Config, Error, NoTls, Row};
@@ -191,6 +191,7 @@ impl QueueManager for PostgresQueueManager {
         };
 
         let queue_items = self.hydrate_queue_items(rows);
+        info!("{:#?}", queue_items);
         Ok(queue_items)
     }
 

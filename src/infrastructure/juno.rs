@@ -74,7 +74,7 @@ impl TransactionRepository for JunoLcd {
     {
         // Hard limitting limit and offset as this is not relevant here to use it as a param.
         let endpoint = format!(
-            "/cosmos/tx/v1beta1/txs?events=execute._contract_address=%27{}%27&pagination.limit=10&pagination.offset=0&pagination.count_total=true&order_by=ORDER_BY_DESC",
+            "/cosmos/tx/v1beta1/txs?events=execute._contract_address=%27{}%27&pagination.limit=100&pagination.offset=0&pagination.count_total=true&reverse=true",
             project_id
         );
         let response = match self.get(endpoint).await {

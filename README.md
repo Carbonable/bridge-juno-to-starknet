@@ -1,5 +1,6 @@
 Bridge from Juno to Starknet for carbonABLE tokens
 ===
+Maybe some current RPC issues.
 
 Developpment
 ---
